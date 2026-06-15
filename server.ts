@@ -3,11 +3,123 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import sql from "mssql";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// SQL Server connection pool manager (Lazy state)
+let mssqlPool: sql.ConnectionPool | null = null;
+let mssqlErrorLogged = false;
+
+// Default Users array
+const DEFAULT_USERS = [
+  { username: "owner", nama: "Owner Utama", password: "owner123", role: "owner", grup: "Admin" },
+  { username: "hasan", nama: "Mandor Hasan", password: "hasan123", role: "mandor", grup: "Grup Hasan" },
+  { username: "ali", nama: "Mandor Ali", password: "ali123", role: "mandor", grup: "Grup Ali" },
+  { username: "budi", nama: "Mandor Budi", password: "budi123", role: "mandor", grup: "Grup Budi" }
+];
+
+async function initializeMssqlTables(pool: sql.ConnectionPool) {
+  try {
+    // 1. Create Grup_Mandor table if not exists
+    await pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Grup_Mandor' and xtype='U')
+      CREATE TABLE Grup_Mandor (
+        Username NVARCHAR(100) PRIMARY KEY,
+        Nama NVARCHAR(250) NOT NULL,
+        Password NVARCHAR(250) NOT NULL,
+        Role NVARCHAR(50) NOT NULL,
+        Grup NVARCHAR(100) NOT NULL
+      );
+    `);
+
+    // 2. Create Laporan table if not exists (headers matching Google sheets)
+    await pool.request().query(`
+      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Laporan' and xtype='U')
+      CREATE TABLE Laporan (
+        ID NVARCHAR(100) PRIMARY KEY,
+        Tanggal NVARCHAR(50) NOT NULL,
+        Lokasi NVARCHAR(250) NOT NULL,
+        Grup NVARCHAR(100) NOT NULL,
+        Jenis NVARCHAR(50) NOT NULL,
+        Pekerjaan NVARCHAR(MAX),
+        Jam NVARCHAR(50),
+        Orang NVARCHAR(50),
+        Kg_Produksi NVARCHAR(50),
+        Jenis_Pupuk NVARCHAR(100),
+        Merek_Pupuk NVARCHAR(100),
+        Sopir NVARCHAR(250),
+        Nopol NVARCHAR(50),
+        Jenis_Truk NVARCHAR(100),
+        Jenis_Muatan NVARCHAR(100),
+        Merek_Muatan NVARCHAR(100),
+        Kg_Angkut NVARCHAR(50),
+        Link_Foto_Kerja NVARCHAR(MAX),
+        Link_Surat_Jalan NVARCHAR(MAX),
+        Link_Foto_Truk NVARCHAR(MAX),
+        Gaji NVARCHAR(50),
+        Status_Pembayaran NVARCHAR(50)
+      );
+    `);
+
+    // Seed default users if table is empty
+    const usersCountRes = await pool.request().query("SELECT COUNT(*) as count FROM Grup_Mandor");
+    if (usersCountRes.recordset[0].count === 0) {
+      console.log("Seeding default mandor/owner users to MS SQL Server...");
+      for (const u of DEFAULT_USERS) {
+        await pool.request()
+          .input("Username", sql.NVarChar, u.username)
+          .input("Nama", sql.NVarChar, u.nama)
+          .input("Password", sql.NVarChar, u.password)
+          .input("Role", sql.NVarChar, u.role)
+          .input("Grup", sql.NVarChar, u.grup)
+          .query(`
+            INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
+            VALUES (@Username, @Nama, @Password, @Role, @Grup)
+          `);
+      }
+    }
+  } catch (err) {
+    console.error("Error creating/initializing SQL Server tables:", err);
+  }
+}
+
+async function getMssqlPool(): Promise<sql.ConnectionPool | null> {
+  const mssqlServer = process.env.MSSQL_SERVER || process.env.DB_HOST;
+  if (!mssqlServer) return null; // Fall back gracefully to Google Sheets/Local JSON
+
+  if (mssqlPool) return mssqlPool;
+
+  const config: sql.config = {
+    user: process.env.MSSQL_USER || process.env.DB_USER,
+    password: process.env.MSSQL_PASSWORD || process.env.DB_PASSWORD,
+    server: mssqlServer,
+    database: process.env.MSSQL_DATABASE || process.env.DB_DATABASE || "master",
+    port: Number(process.env.MSSQL_PORT || process.env.DB_PORT) || 1433,
+    options: {
+      encrypt: process.env.MSSQL_ENCRYPT === "true" || process.env.MSSQL_ENCRYPT === undefined, 
+      trustServerCertificate: true, 
+    },
+    connectionTimeout: 15000,
+  };
+
+  try {
+    console.log(`Connecting to SQL Server: ${config.server}:${config.port}, DB: ${config.database}...`);
+    mssqlPool = await sql.connect(config);
+    console.log("Connected to SQL Server successfully!");
+    await initializeMssqlTables(mssqlPool);
+    return mssqlPool;
+  } catch (err) {
+    if (!mssqlErrorLogged) {
+      console.error("Failed to connect to MS SQL Server, falling back to Sheets/Local JSON storage:", err);
+      mssqlErrorLogged = true;
+    }
+    return null;
+  }
+}
 
 // High limits for base64 photo uploads
 app.use(express.json({ limit: "50mb" }));
@@ -17,14 +129,6 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 const CREDENTIALS_PATH = path.join(process.cwd(), "google-credentials.json");
 const LAPORAN_FALLBACK_PATH = path.join(process.cwd(), "laporan-fallback.json");
 const USERS_FALLBACK_PATH = path.join(process.cwd(), "users-fallback.json");
-
-// --- LOCAL DEFAULT DATA (Fallback database before Google Sheets is connected) ---
-const DEFAULT_USERS = [
-  { username: "owner", nama: "Owner Utama", password: "owner123", role: "owner", grup: "Admin" },
-  { username: "hasan", nama: "Mandor Hasan", password: "hasan123", role: "mandor", grup: "Grup Hasan" },
-  { username: "ali", nama: "Mandor Ali", password: "ali123", role: "mandor", grup: "Grup Ali" },
-  { username: "budi", nama: "Mandor Budi", password: "budi123", role: "mandor", grup: "Grup Budi" }
-];
 
 const DEFAULT_LAPORAN = [
   {
@@ -342,6 +446,20 @@ function parseSheetRows(values: any[][]): any[] {
 // --- API WORKSPACE HANDLERS ---
 
 async function fetchFromSheet(sheetName: string): Promise<any[]> {
+  // 1. Try SQL Server first
+  const pool = await getMssqlPool();
+  if (pool) {
+    try {
+      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
+      console.log(`Executing SQL Server query: SELECT * FROM ${tableName}`);
+      const result = await pool.request().query(`SELECT * FROM ${tableName}`);
+      return result.recordset;
+    } catch (err) {
+      console.error(`Error querying ${sheetName} from SQL Server database:`, err);
+    }
+  }
+
+  // 2. Fall back to Google Sheets or Local storage
   const token = await getGoogleAccessToken();
   if (!token) {
     // Falls back to local json file
@@ -369,6 +487,85 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
 }
 
 async function writeToSheet(sheetName: string, items: any[]) {
+  // 1. Try SQL Server first
+  const pool = await getMssqlPool();
+  if (pool) {
+    try {
+      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
+      console.log(`Overwriting SQL Server table: ${tableName} with ${items.length} records`);
+      
+      const transaction = new sql.Transaction(pool);
+      await transaction.begin();
+      try {
+        // Truncate existing rows to synchronize full state
+        await transaction.request().query(`TRUNCATE TABLE ${tableName}`);
+        
+        if (sheetName === "Laporan") {
+          for (const item of items) {
+            await transaction.request()
+              .input("ID", sql.NVarChar, item.ID || `L-${Date.now()}-${Math.round(Math.random()*1000)}`)
+              .input("Tanggal", sql.NVarChar, item.Tanggal || "")
+              .input("Lokasi", sql.NVarChar, item.Lokasi || "")
+              .input("Grup", sql.NVarChar, item.Grup || "")
+              .input("Jenis", sql.NVarChar, item.Jenis || "")
+              .input("Pekerjaan", sql.NVarChar, item.Pekerjaan || "")
+              .input("Jam", sql.NVarChar, item.Jam || "")
+              .input("Orang", sql.NVarChar, item.Orang || "")
+              .input("Kg_Produksi", sql.NVarChar, item.Kg_Produksi || "")
+              .input("Jenis_Pupuk", sql.NVarChar, item.Jenis_Pupuk || "")
+              .input("Merek_Pupuk", sql.NVarChar, item.Merek_Pupuk || "")
+              .input("Sopir", sql.NVarChar, item.Sopir || "")
+              .input("Nopol", sql.NVarChar, item.Nopol || "")
+              .input("Jenis_Truk", sql.NVarChar, item.Jenis_Truk || "")
+              .input("Jenis_Muatan", sql.NVarChar, item.Jenis_Muatan || "")
+              .input("Merek_Muatan", sql.NVarChar, item.Merek_Muatan || "")
+              .input("Kg_Angkut", sql.NVarChar, item.Kg_Angkut || "")
+              .input("Link_Foto_Kerja", sql.NVarChar, item.Link_Foto_Kerja || "")
+              .input("Link_Surat_Jalan", sql.NVarChar, item.Link_Surat_Jalan || "")
+              .input("Link_Foto_Truk", sql.NVarChar, item.Link_Foto_Truk || "")
+              .input("Gaji", sql.NVarChar, String(item.Gaji || "0"))
+              .input("Status_Pembayaran", sql.NVarChar, item.Status_Pembayaran || "Belum Lunas")
+              .query(`
+                INSERT INTO Laporan (
+                  ID, Tanggal, Lokasi, Grup, Jenis, Pekerjaan, Jam, Orang, 
+                  Kg_Produksi, Jenis_Pupuk, Merek_Pupuk, Sopir, Nopol, Jenis_Truk, 
+                  Jenis_Muatan, Merek_Muatan, Kg_Angkut, Link_Foto_Kerja, Link_Surat_Jalan, 
+                  Link_Foto_Truk, Gaji, Status_Pembayaran
+                ) VALUES (
+                  @ID, @Tanggal, @Lokasi, @Grup, @Jenis, @Pekerjaan, @Jam, @Orang, 
+                  @Kg_Produksi, @Jenis_Pupuk, @Merek_Pupuk, @Sopir, @Nopol, @Jenis_Truk, 
+                  @Jenis_Muatan, @Merek_Muatan, @Kg_Angkut, @Link_Foto_Kerja, @Link_Surat_Jalan, 
+                  @Link_Foto_Truk, @Gaji, @Status_Pembayaran
+                )
+              `);
+          }
+        } else {
+          // Grup_Mandor
+          for (const item of items) {
+            await transaction.request()
+              .input("Username", sql.NVarChar, item.Username || item.username || "")
+              .input("Nama", sql.NVarChar, item.Nama || item.nama || "")
+              .input("Password", sql.NVarChar, item.Password || item.password || "")
+              .input("Role", sql.NVarChar, item.Role || item.role || "mandor")
+              .input("Grup", sql.NVarChar, item.Grup || item.grup || "")
+              .query(`
+                INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
+                VALUES (@Username, @Nama, @Password, @Role, @Grup)
+              `);
+          }
+        }
+        await transaction.commit();
+        return; // Success, skip sheet writing
+      } catch (innerErr) {
+        await transaction.rollback();
+        throw innerErr;
+      }
+    } catch (err) {
+      console.error(`Error saving ${sheetName} to SQL Server database, falling back:`, err);
+    }
+  }
+
+  // 2. Fall back to Google Sheets / local json
   const token = await getGoogleAccessToken();
   if (!token) {
     if (sheetName === "Laporan") saveLocalLaporan(items);
