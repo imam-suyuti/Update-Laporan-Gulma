@@ -29,6 +29,8 @@ import {
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { ReportEntry, UserAccount, GoogleStatus } from "./types";
+// @ts-ignore
+import logoOwl from "./assets/images/logo_owl_1781561733481.jpg";
 
 export default function App() {
   // --- AUTH STATE ---
@@ -850,7 +852,12 @@ export default function App() {
       <div className="min-h-screen bg-[#F5F6F4] flex flex-col items-center justify-center p-4">
         <form onSubmit={doLogin} className="bg-white rounded-2xl shadow-md border border-[#E3E5E2] p-8 w-full max-w-md">
           <div className="flex flex-col items-center mb-6">
-            <span className="text-5xl mb-2 animate-bounce">🦉</span>
+            <img 
+              src={logoOwl} 
+              alt="Logo CV Gulma_Gemilang" 
+              className="w-20 h-20 object-contain mb-3 drop-shadow rounded-full bg-white border border-[#E3E5E2] p-1 animate-pulse" 
+              referrerPolicy="no-referrer"
+            />
             <h1 className="text-2xl font-bold font-serif text-[#1A7F5A] tracking-tight">CV Gulma Gemilang</h1>
             <p className="text-xs text-[#6B7068] mt-1 text-center">Sistem Laporan Hasil Kerja & Manajemen Slip Gaji Harian</p>
           </div>
@@ -920,8 +927,13 @@ export default function App() {
       {/* HEADER BAR */}
       <header className="bg-[#1A7F5A] text-white px-4 md:px-8 py-3.5 flex flex-col sm:flex-row items-center justify-between shadow-sm sticky top-0 z-[40]">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center text-xl shadow-inner">
-            🦉
+          <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center overflow-hidden shadow-inner border border-white/20">
+            <img 
+              src={logoOwl} 
+              alt="Owl Logo" 
+              className="w-full h-full object-cover" 
+              referrerPolicy="no-referrer"
+            />
           </div>
           <div>
             <h2 className="font-bold text-base md:text-lg tracking-tight font-serif">CV GULMA GEMILANG</h2>

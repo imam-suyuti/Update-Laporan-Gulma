@@ -3,21 +3,11 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import sql from "mssql";
-import mysql from "mysql2/promise";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
-
-// MySQL connection pool manager (Lazy state)
-let mysqlPool: any = null;
-let mysqlErrorLogged = false;
-
-// SQL Server connection pool manager (Lazy state)
-let mssqlPool: sql.ConnectionPool | null = null;
-let mssqlErrorLogged = false;
 
 // Default Users array
 const DEFAULT_USERS = [
@@ -26,197 +16,6 @@ const DEFAULT_USERS = [
   { username: "ali", nama: "Mandor Ali", password: "ali123", role: "mandor", grup: "Grup Ali" },
   { username: "budi", nama: "Mandor Budi", password: "budi123", role: "mandor", grup: "Grup Budi" }
 ];
-
-async function initializeMssqlTables(pool: sql.ConnectionPool) {
-  try {
-    // 1. Create Grup_Mandor table if not exists
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Grup_Mandor' and xtype='U')
-      CREATE TABLE Grup_Mandor (
-        Username NVARCHAR(100) PRIMARY KEY,
-        Nama NVARCHAR(250) NOT NULL,
-        Password NVARCHAR(250) NOT NULL,
-        Role NVARCHAR(50) NOT NULL,
-        Grup NVARCHAR(100) NOT NULL
-      );
-    `);
-
-    // 2. Create Laporan table if not exists (headers matching Google sheets)
-    await pool.request().query(`
-      IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Laporan' and xtype='U')
-      CREATE TABLE Laporan (
-        ID NVARCHAR(100) PRIMARY KEY,
-        Tanggal NVARCHAR(50) NOT NULL,
-        Lokasi NVARCHAR(250) NOT NULL,
-        Grup NVARCHAR(100) NOT NULL,
-        Jenis NVARCHAR(50) NOT NULL,
-        Pekerjaan NVARCHAR(MAX),
-        Jam NVARCHAR(50),
-        Orang NVARCHAR(50),
-        Kg_Produksi NVARCHAR(50),
-        Jenis_Pupuk NVARCHAR(100),
-        Merek_Pupuk NVARCHAR(100),
-        Sopir NVARCHAR(250),
-        Nopol NVARCHAR(50),
-        Jenis_Truk NVARCHAR(100),
-        Jenis_Muatan NVARCHAR(100),
-        Merek_Muatan NVARCHAR(100),
-        Kg_Angkut NVARCHAR(50),
-        Link_Foto_Kerja NVARCHAR(MAX),
-        Link_Surat_Jalan NVARCHAR(MAX),
-        Link_Foto_Truk NVARCHAR(MAX),
-        Gaji NVARCHAR(50),
-        Status_Pembayaran NVARCHAR(50)
-      );
-    `);
-
-    // Seed default users if table is empty
-    const usersCountRes = await pool.request().query("SELECT COUNT(*) as count FROM Grup_Mandor");
-    if (usersCountRes.recordset[0].count === 0) {
-      console.log("Seeding default mandor/owner users to MS SQL Server...");
-      for (const u of DEFAULT_USERS) {
-        await pool.request()
-          .input("Username", sql.NVarChar, u.username)
-          .input("Nama", sql.NVarChar, u.nama)
-          .input("Password", sql.NVarChar, u.password)
-          .input("Role", sql.NVarChar, u.role)
-          .input("Grup", sql.NVarChar, u.grup)
-          .query(`
-            INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
-            VALUES (@Username, @Nama, @Password, @Role, @Grup)
-          `);
-      }
-    }
-  } catch (err) {
-    console.error("Error creating/initializing SQL Server tables:", err);
-  }
-}
-
-async function getMssqlPool(): Promise<sql.ConnectionPool | null> {
-  const mssqlServer = process.env.MSSQL_SERVER || process.env.DB_HOST;
-  if (!mssqlServer) return null; // Fall back gracefully to Google Sheets/Local JSON
-
-  if (mssqlPool) return mssqlPool;
-
-  const config: sql.config = {
-    user: process.env.MSSQL_USER || process.env.DB_USER,
-    password: process.env.MSSQL_PASSWORD || process.env.DB_PASSWORD,
-    server: mssqlServer,
-    database: process.env.MSSQL_DATABASE || process.env.DB_DATABASE || "master",
-    port: Number(process.env.MSSQL_PORT || process.env.DB_PORT) || 1433,
-    options: {
-      encrypt: process.env.MSSQL_ENCRYPT === "true" || process.env.MSSQL_ENCRYPT === undefined, 
-      trustServerCertificate: true, 
-    },
-    connectionTimeout: 15000,
-  };
-
-  try {
-    console.log(`Connecting to SQL Server: ${config.server}:${config.port}, DB: ${config.database}...`);
-    mssqlPool = await sql.connect(config);
-    console.log("Connected to SQL Server successfully!");
-    await initializeMssqlTables(mssqlPool);
-    return mssqlPool;
-  } catch (err) {
-    if (!mssqlErrorLogged) {
-      console.error("Failed to connect to MS SQL Server, falling back to Sheets/Local JSON storage:", err);
-      mssqlErrorLogged = true;
-    }
-    return null;
-  }
-}
-
-async function getMysqlPool(): Promise<any> {
-  const host = process.env.MYSQL_HOST || process.env.MYSQL_SERVER;
-  const user = process.env.MYSQL_USER;
-  const password = process.env.MYSQL_PASSWORD;
-  const database = process.env.MYSQL_DATABASE;
-
-  if (!host || !user) return null; // No MySQL configuration is provided
-
-  if (mysqlPool) return mysqlPool;
-
-  try {
-    console.log(`Connecting to MySQL Database: ${host}, DB: ${database}...`);
-    mysqlPool = await mysql.createPool({
-      host,
-      user,
-      password,
-      database,
-      port: Number(process.env.MYSQL_PORT) || 3306,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0
-    });
-    console.log("Connected to MySQL Database successfully!");
-    await initializeMysqlTables(mysqlPool);
-    return mysqlPool;
-  } catch (err) {
-    if (!mysqlErrorLogged) {
-      console.error("Failed to connect to MySQL Server, falling back:", err);
-      mysqlErrorLogged = true;
-    }
-    return null;
-  }
-}
-
-async function initializeMysqlTables(pool: any) {
-  try {
-    // 1. Create Grup_Mandor table if not exists (lowercase & exact names for total compatibility)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS Grup_Mandor (
-        Username VARCHAR(100) PRIMARY KEY,
-        Nama VARCHAR(250) NOT NULL,
-        Password VARCHAR(250) NOT NULL,
-        Role VARCHAR(50) NOT NULL,
-        Grup VARCHAR(100) NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
-
-    // 2. Create Laporan table if not exists
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS Laporan (
-        ID VARCHAR(100) PRIMARY KEY,
-        Tanggal VARCHAR(50) NOT NULL,
-        Lokasi VARCHAR(250) NOT NULL,
-        Grup VARCHAR(100) NOT NULL,
-        Jenis VARCHAR(50) NOT NULL,
-        Pekerjaan TEXT,
-        Jam VARCHAR(50),
-        Orang VARCHAR(50),
-        Kg_Produksi VARCHAR(50),
-        Jenis_Pupuk VARCHAR(100),
-        Merek_Pupuk VARCHAR(100),
-        Sopir VARCHAR(250),
-        Nopol VARCHAR(50),
-        Jenis_Truk VARCHAR(100),
-        Jenis_Muatan VARCHAR(100),
-        Merek_Muatan VARCHAR(100),
-        Kg_Angkut VARCHAR(50),
-        Link_Foto_Kerja TEXT,
-        Link_Surat_Jalan TEXT,
-        Link_Foto_Truk TEXT,
-        Gaji VARCHAR(50),
-        Status_Pembayaran VARCHAR(50)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `);
-
-    // Seed default users if empty
-    const [rows]: [any[], any] = await pool.query("SELECT COUNT(*) as count FROM Grup_Mandor");
-    const count = rows[0]?.count || 0;
-    if (count === 0) {
-      console.log("Seeding default mandor/owner users to MySQL Database...");
-      for (const u of DEFAULT_USERS) {
-        await pool.query(
-          "INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup) VALUES (?, ?, ?, ?, ?)",
-          [u.username, u.nama, u.password, u.role, u.grup]
-        );
-      }
-    }
-  } catch (err) {
-    console.error("Error creating/initializing MySQL tables:", err);
-  }
-}
 
 // High limits for base64 photo uploads
 app.use(express.json({ limit: "50mb" }));
@@ -472,67 +271,7 @@ function parseSheetRows(values: any[][]): any[] {
 // --- API WORKSPACE HANDLERS ---
 
 async function fetchFromSheet(sheetName: string): Promise<any[]> {
-  // 1. Try MySQL first (preferred for cPanel/phpMyAdmin shared hosting)
-  const myPool = await getMysqlPool();
-  if (myPool) {
-    try {
-      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
-      console.log(`Executing MySQL query: SELECT * FROM ${tableName}`);
-      const [rows] = await myPool.query(`SELECT * FROM ${tableName}`);
-      
-      return (rows as any[]).map(row => {
-        const normalized: any = {};
-        for (const k of Object.keys(row)) {
-          normalized[k] = row[k];
-          if (k === "Username") normalized.username = row[k];
-          if (k === "Nama") normalized.nama = row[k];
-          if (k === "Password") normalized.password = row[k];
-          if (k === "Role") normalized.role = row[k];
-          if (k === "Grup") normalized.grup = row[k];
-          if (k === "username") normalized.Username = row[k];
-          if (k === "nama") normalized.Nama = row[k];
-          if (k === "password") normalized.Password = row[k];
-          if (k === "role") normalized.Role = row[k];
-          if (k === "grup") normalized.Grup = row[k];
-        }
-        return normalized;
-      });
-    } catch (err) {
-      console.error(`Error querying ${sheetName} from MySQL database:`, err);
-    }
-  }
-
-  // 2. Try SQL Server next
-  const pool = await getMssqlPool();
-  if (pool) {
-    try {
-      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
-      console.log(`Executing SQL Server query: SELECT * FROM ${tableName}`);
-      const result = await pool.request().query(`SELECT * FROM ${tableName}`);
-      
-      return result.recordset.map(row => {
-        const normalized: any = {};
-        for (const k of Object.keys(row)) {
-          normalized[k] = row[k];
-          if (k === "Username") normalized.username = row[k];
-          if (k === "Nama") normalized.nama = row[k];
-          if (k === "Password") normalized.password = row[k];
-          if (k === "Role") normalized.role = row[k];
-          if (k === "Grup") normalized.grup = row[k];
-          if (k === "username") normalized.Username = row[k];
-          if (k === "nama") normalized.Nama = row[k];
-          if (k === "password") normalized.Password = row[k];
-          if (k === "role") normalized.Role = row[k];
-          if (k === "grup") normalized.Grup = row[k];
-        }
-        return normalized;
-      });
-    } catch (err) {
-      console.error(`Error querying ${sheetName} from SQL Server database:`, err);
-    }
-  }
-
-  // 3. Fall back to Google Sheets or Local storage
+  // Fall back to Google Sheets or Local storage
   const token = await getGoogleAccessToken();
   if (!token) {
     // Falls back to local json file
@@ -560,159 +299,7 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
 }
 
 async function writeToSheet(sheetName: string, items: any[]) {
-  // 1. Try MySQL first
-  const myPool = await getMysqlPool();
-  if (myPool) {
-    try {
-      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
-      console.log(`Overwriting MySQL table: ${tableName} with ${items.length} records`);
-      
-      const connection = await myPool.getConnection();
-      try {
-        await connection.beginTransaction();
-        await connection.query(`DELETE FROM ${tableName}`);
-        
-        if (sheetName === "Laporan") {
-          for (const item of items) {
-            await connection.query(`
-              INSERT INTO Laporan (
-                ID, Tanggal, Lokasi, Grup, Jenis, Pekerjaan, Jam, Orang, 
-                Kg_Produksi, Jenis_Pupuk, Merek_Pupuk, Sopir, Nopol, Jenis_Truk, 
-                Jenis_Muatan, Merek_Muatan, Kg_Angkut, Link_Foto_Kerja, Link_Surat_Jalan, 
-                Link_Foto_Truk, Gaji, Status_Pembayaran
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-              item.ID || item.id || `L-${Date.now()}-${Math.round(Math.random()*1000)}`,
-              item.Tanggal || item.tanggal || "",
-              item.Lokasi || item.lokasi || "",
-              item.Grup || item.grup || "",
-              item.Jenis || item.jenis || "",
-              item.Pekerjaan || item.pekerjaan || "",
-              item.Jam || item.jam || "",
-              item.Orang || item.orang || "",
-              item.Kg_Produksi || item.kg_produksi || "",
-              item.Jenis_Pupuk || item.jenis_pupuk || "",
-              item.Merek_Pupuk || item.merek_pupuk || "",
-              item.Sopir || item.sopir || "",
-              item.Nopol || item.nopol || "",
-              item.Jenis_Truk || item.jenis_truk || "",
-              item.Jenis_Muatan || item.jenis_muatan || "",
-              item.Merek_Muatan || item.merek_muatan || "",
-              item.Kg_Angkut || item.kg_angkut || "",
-              item.Link_Foto_Kerja || item.link_foto_kerja || "",
-              item.Link_Surat_Jalan || item.link_surat_jalan || "",
-              item.Link_Foto_Truk || item.link_foto_truk || "",
-              String(item.Gaji || item.gaji || "0"),
-              item.Status_Pembayaran || item.status_pembayaran || "Belum Lunas"
-            ]);
-          }
-        } else {
-          // Grup_Mandor
-          for (const item of items) {
-            await connection.query(`
-              INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
-              VALUES (?, ?, ?, ?, ?)
-            `, [
-              item.Username || item.username || "",
-              item.Nama || item.nama || "",
-              item.Password || item.password || "",
-              item.Role || item.role || "mandor",
-              item.Grup || item.grup || ""
-            ]);
-          }
-        }
-        await connection.commit();
-        return; // Success, skip sheet/SQL Server writing
-      } catch (innerErr) {
-        await connection.rollback();
-        throw innerErr;
-      } finally {
-        connection.release();
-      }
-    } catch (err) {
-      console.error(`Error saving ${sheetName} to MySQL database, falling back:`, err);
-    }
-  }
-
-  // 2. Try SQL Server next
-  const pool = await getMssqlPool();
-  if (pool) {
-    try {
-      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
-      console.log(`Overwriting SQL Server table: ${tableName} with ${items.length} records`);
-      
-      const transaction = new sql.Transaction(pool);
-      await transaction.begin();
-      try {
-        // Truncate existing rows to synchronize full state
-        await transaction.request().query(`TRUNCATE TABLE ${tableName}`);
-        
-        if (sheetName === "Laporan") {
-          for (const item of items) {
-            await transaction.request()
-              .input("ID", sql.NVarChar, item.ID || item.id || `L-${Date.now()}-${Math.round(Math.random()*1000)}`)
-              .input("Tanggal", sql.NVarChar, item.Tanggal || item.tanggal || "")
-              .input("Lokasi", sql.NVarChar, item.Lokasi || item.lokasi || "")
-              .input("Grup", sql.NVarChar, item.Grup || item.grup || "")
-              .input("Jenis", sql.NVarChar, item.Jenis || item.jenis || "")
-              .input("Pekerjaan", sql.NVarChar, item.Pekerjaan || item.pekerjaan || "")
-              .input("Jam", sql.NVarChar, item.Jam || item.jam || "")
-              .input("Orang", sql.NVarChar, item.Orang || item.orang || "")
-              .input("Kg_Produksi", sql.NVarChar, item.Kg_Produksi || item.kg_produksi || "")
-              .input("Jenis_Pupuk", sql.NVarChar, item.Jenis_Pupuk || item.jenis_pupuk || "")
-              .input("Merek_Pupuk", sql.NVarChar, item.Merek_Pupuk || item.merek_pupuk || "")
-              .input("Sopir", sql.NVarChar, item.Sopir || item.sopir || "")
-              .input("Nopol", sql.NVarChar, item.Nopol || item.nopol || "")
-              .input("Jenis_Truk", sql.NVarChar, item.Jenis_Truk || item.jenis_truk || "")
-              .input("Jenis_Muatan", sql.NVarChar, item.Jenis_Muatan || item.jenis_muatan || "")
-              .input("Merek_Muatan", sql.NVarChar, item.Merek_Muatan || item.merek_muatan || "")
-              .input("Kg_Angkut", sql.NVarChar, item.Kg_Angkut || item.kg_angkut || "")
-              .input("Link_Foto_Kerja", sql.NVarChar, item.Link_Foto_Kerja || item.link_foto_kerja || "")
-              .input("Link_Surat_Jalan", sql.NVarChar, item.Link_Surat_Jalan || item.link_surat_jalan || "")
-              .input("Link_Foto_Truk", sql.NVarChar, item.Link_Foto_Truk || item.link_foto_truk || "")
-              .input("Gaji", sql.NVarChar, String(item.Gaji || item.gaji || "0"))
-              .input("Status_Pembayaran", sql.NVarChar, item.Status_Pembayaran || item.status_pembayaran || "Belum Lunas")
-              .query(`
-                INSERT INTO Laporan (
-                  ID, Tanggal, Lokasi, Grup, Jenis, Pekerjaan, Jam, Orang, 
-                  Kg_Produksi, Jenis_Pupuk, Merek_Pupuk, Sopir, Nopol, Jenis_Truk, 
-                  Jenis_Muatan, Merek_Muatan, Kg_Angkut, Link_Foto_Kerja, Link_Surat_Jalan, 
-                  Link_Foto_Truk, Gaji, Status_Pembayaran
-                ) VALUES (
-                  @ID, @Tanggal, @Lokasi, @Grup, @Jenis, @Pekerjaan, @Jam, @Orang, 
-                  @Kg_Produksi, @Jenis_Pupuk, @Merek_Pupuk, @Sopir, @Nopol, @Jenis_Truk, 
-                  @Jenis_Muatan, @Merek_Muatan, @Kg_Angkut, @Link_Foto_Kerja, @Link_Surat_Jalan, 
-                  @Link_Foto_Truk, @Gaji, @Status_Pembayaran
-                )
-              `);
-          }
-        } else {
-          // Grup_Mandor
-          for (const item of items) {
-            await transaction.request()
-              .input("Username", sql.NVarChar, item.Username || item.username || "")
-              .input("Nama", sql.NVarChar, item.Nama || item.nama || "")
-              .input("Password", sql.NVarChar, item.Password || item.password || "")
-              .input("Role", sql.NVarChar, item.Role || item.role || "mandor")
-              .input("Grup", sql.NVarChar, item.Grup || item.grup || "")
-              .query(`
-                INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
-                VALUES (@Username, @Nama, @Password, @Role, @Grup)
-              `);
-          }
-        }
-        await transaction.commit();
-        return; // Success, skip sheet writing
-      } catch (innerErr) {
-        await transaction.rollback();
-        throw innerErr;
-      }
-    } catch (err) {
-      console.error(`Error saving ${sheetName} to SQL Server database, falling back:`, err);
-    }
-  }
-
-  // 2. Fall back to Google Sheets / local json
+  // Fall back to Google Sheets / local json
   const token = await getGoogleAccessToken();
   if (!token) {
     if (sheetName === "Laporan") saveLocalLaporan(items);
@@ -1030,8 +617,15 @@ app.post("/api/auth/login", async (req, res) => {
 // Get User Groups List
 app.get("/api/users", async (req, res) => {
   try {
-    const users = await fetchFromSheet("Grup_Mandor");
-    res.json({ ok: true, data: users });
+    const rawUsers = await fetchFromSheet("Grup_Mandor");
+    const normalized = rawUsers.map((u) => ({
+      username: u.Username || u.username || "",
+      nama: u.Nama || u.nama || "",
+      password: u.Password || u.password || "",
+      role: u.Role || u.role || "mandor",
+      grup: u.Grup || u.grup || "",
+    }));
+    res.json({ ok: true, data: normalized });
   } catch (err) {
     res.json({ ok: false, msg: "Gagal mengambil daftar pengguna." });
   }
@@ -1046,7 +640,7 @@ app.post("/api/user-save", async (req, res) => {
 
   try {
     const users = await fetchFromSheet("Grup_Mandor");
-    const idx = users.findIndex((u) => u.Username?.toLowerCase() === user.username.toLowerCase());
+    const idx = users.findIndex((u) => (u.Username || u.username || "").toLowerCase() === user.username.toLowerCase());
     const payload = {
       Username: user.username,
       Nama: user.nama,
@@ -1077,7 +671,7 @@ app.post("/api/user-delete", async (req, res) => {
 
   try {
     const users = await fetchFromSheet("Grup_Mandor");
-    const updated = users.filter((u) => u.Username?.toLowerCase() !== username.toLowerCase());
+    const updated = users.filter((u) => (u.Username || u.username || "").toLowerCase() !== username.toLowerCase());
     await writeToSheet("Grup_Mandor", updated);
     res.json({ ok: true, msg: "Grup berhasil dihapus." });
   } catch (err) {
