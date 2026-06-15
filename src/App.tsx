@@ -32,6 +32,47 @@ import { ReportEntry, UserAccount, GoogleStatus } from "./types";
 // @ts-ignore
 import logoOwl from "./assets/images/logo_owl_1781561733481.jpg";
 
+const DEFAULT_DROPDOWNS = {
+  lokasi: [
+    { value: "Tongas", label: "Gudang Tongas" },
+    { value: "Kraton", label: "Kraton Production Mill" }
+  ],
+  aktivitas: [
+    { value: "Bersih-bersih Gudang", label: "Bersih-bersih Gudang" },
+    { value: "Proses Rebagging", label: "Proses Rebagging" },
+    { value: "Perbaikan Mesin", label: "Perbaikan Mesin" },
+    { value: "Pembangunan Fasilitas", label: "Pembangunan Fasilitas" }
+  ],
+  pupukJenis: [
+    { value: "Granul", label: "Organik Granul (Butiran)" },
+    { value: "Remah", label: "Organik Remah (Curah)" },
+    { value: "Cair", label: "Hayati Cair (Pupuk Cair)" }
+  ],
+  pupukMerek: [
+    { value: "Buah Ndaru", label: "Buah Ndaru Premium" },
+    { value: "Ziraea", label: "Ziraea Eco-Friendly" },
+    { value: "JE (Java Excellent)", label: "JE (Java Excellent)" },
+    { value: "Polos", label: "Karung Polos (Tanpa Merek)" }
+  ],
+  trukJenis: [
+    { value: "Colt Diesel", label: "Colt Diesel" },
+    { value: "Fuso", label: "Fuso Ragasa" },
+    { value: "Tronton", label: "Tronton Engkel" },
+    { value: "Gandeng", label: "Gandeng Cargo" }
+  ],
+  trukMuatan: [
+    { value: "Granul", label: "Granul Pack" },
+    { value: "Remah", label: "Remah Curah" },
+    { value: "Bahan Baku", label: "Kotoran / Baku" }
+  ],
+  trukMerek: [
+    { value: "Buah Ndaru", label: "Buah Ndaru" },
+    { value: "Ziraea", label: "Ziraea" },
+    { value: "Java Excellent", label: "Excellent" },
+    { value: "Polos", label: "Kosongan" }
+  ]
+};
+
 export default function App() {
   // --- AUTH STATE ---
   const [session, setSession] = useState<UserAccount | null>(() => {
@@ -49,6 +90,32 @@ export default function App() {
 
   // --- APP NAVIGATION ---
   const [activeTab, setActiveTab] = useState<"form" | "rekap" | "user">("form");
+  const [adminSubTab, setAdminSubTab] = useState<"users" | "dropdowns" | "history">("users");
+
+  // --- DROPDOWN MANAGE STATES ---
+  const [dropdowns, setDropdowns] = useState<typeof DEFAULT_DROPDOWNS>(() => {
+    const saved = localStorage.getItem("gg_dropdowns");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return DEFAULT_DROPDOWNS; }
+    }
+    return DEFAULT_DROPDOWNS;
+  });
+
+  const [selectedCategory, setSelectedCategory] = useState<keyof typeof DEFAULT_DROPDOWNS>("lokasi");
+  const [newOptionValue, setNewOptionValue] = useState("");
+  const [newOptionLabel, setNewOptionLabel] = useState("");
+  const [editingOptionIdx, setEditingOptionIdx] = useState<number | null>(null);
+  const [editOptionValue, setEditOptionValue] = useState("");
+  const [editOptionLabel, setEditOptionLabel] = useState("");
+
+  // --- SLIP PRINT HISTORY ---
+  const [slipHistory, setSlipHistory] = useState<any[]>(() => {
+    const saved = localStorage.getItem("gg_slip_history");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { return []; }
+    }
+    return [];
+  });
 
   // --- DATA LISTS ---
   const [reports, setReports] = useState<ReportEntry[]>([]);
@@ -577,6 +644,57 @@ export default function App() {
     }
   };
 
+  // --- DROPDOWN CRUD FUNCTIONS ---
+  const handleAddOption = (category: keyof typeof DEFAULT_DROPDOWNS) => {
+    if (!newOptionValue.trim() || !newOptionLabel.trim()) {
+      triggerToast("⚠ Harap isi Kode (Value) dan Label Pilihan.", "error");
+      return;
+    }
+    const exists = dropdowns[category].some((opt) => opt.value.toLowerCase() === newOptionValue.trim().toLowerCase());
+    if (exists) {
+      triggerToast("⚠ Pilihan dengan Kode tersebut sudah ada.", "error");
+      return;
+    }
+    const updatedOptions = [...dropdowns[category], { value: newOptionValue.trim(), label: newOptionLabel.trim() }];
+    const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
+    setDropdowns(nextDropdowns);
+    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    setNewOptionValue("");
+    setNewOptionLabel("");
+    triggerToast("✓ Berhasil menambah pilihan baru!");
+  };
+
+  const handleStartEditOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
+    const item = dropdowns[category][idx];
+    setEditingOptionIdx(idx);
+    setEditOptionValue(item.value);
+    setEditOptionLabel(item.label);
+  };
+
+  const handleSaveEditOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
+    if (!editOptionValue.trim() || !editOptionLabel.trim()) {
+      triggerToast("⚠ Nama Kode dan Label tidak boleh kosong.", "error");
+      return;
+    }
+    const updatedOptions = [...dropdowns[category]];
+    updatedOptions[idx] = { value: editOptionValue.trim(), label: editOptionLabel.trim() };
+    const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
+    setDropdowns(nextDropdowns);
+    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    setEditingOptionIdx(null);
+    triggerToast("✓ Berhasil menyimpan perubahan!");
+  };
+
+  const handleDeleteOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
+    const confirm = window.confirm(`Hapus pilihan "${dropdowns[category][idx].label}" dari dropdown?`);
+    if (!confirm) return;
+    const updatedOptions = dropdowns[category].filter((_, i) => i !== idx);
+    const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
+    setDropdowns(nextDropdowns);
+    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    triggerToast("✓ Berhasil menghapus pilihan.");
+  };
+
   // --- FILTERS LOGIC ---
   const filteredReports = reports.filter((item) => {
     // Group restriction for mandor - they can only see their own group records
@@ -639,8 +757,25 @@ export default function App() {
 
     setIsUpdatingPayroll(true);
 
+    const logoImg = new Image();
+    logoImg.crossOrigin = "anonymous";
+    logoImg.onload = async () => {
+      await generatePdfWithLogo(logoImg);
+    };
+    logoImg.onerror = async () => {
+      console.warn("Falling back to generating PDF without corporate logo...");
+      await generatePdfWithLogo(null);
+    };
+    logoImg.src = logoOwl;
+  };
+
+  const generatePdfWithLogo = async (imgElement: HTMLImageElement | null) => {
+    const targetGroup = session?.role === "mandor" ? session.grup : filterGrup;
+    const unpaidItems = filteredReports.filter(
+      (item) => item.Grup === targetGroup && item.Status_Pembayaran !== "Lunas"
+    );
+
     try {
-      // 1. Generate beautiful corporate PDF using jsPDF
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -656,30 +791,40 @@ export default function App() {
       doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
       doc.rect(0, 0, 210, 45, "F");
 
-      // Title CV
+      // Draw Owl Logo inside header
+      if (imgElement) {
+        try {
+          doc.addImage(imgElement, "JPEG", 15, 10, 22, 22);
+        } catch (e) {
+          console.warn("Failed to render logo within PDF payload: ", e);
+        }
+      }
+
+      // Title CV (nested side by side from the logo template)
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(22);
-      doc.text("CV GULMA GEMILANG", 15, 18);
+      doc.text("CV GULMA GEMILANG", 42, 18);
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text("Produksi Pupuk Organik Premium & Jasa Distribusi Agrobisnis", 15, 24);
-      doc.text("Kraton & Tongas, Jawa Timur - Indonesia | Telp: +62 811-3444-232", 15, 29);
+      doc.setFontSize(8.5);
+      doc.text("Produksi Pupuk Organik Premium & Jasa Distribusi Agrobisnis", 42, 24);
+      doc.text("Tongas, Probolinggo, Jawa Timur - Indonesia | Telp: +62 853-8564-6533", 42, 29);
 
       // Label "SLIP GAJI"
       doc.setFillColor(accentColor[0], accentColor[1], accentColor[2]);
-      doc.rect(145, 12, 50, 10, "F");
+      doc.rect(145, 12, 53, 10, "F");
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.text("SLIP PEKERJAAN", 150, 18.5);
+      doc.setFontSize(10);
+      doc.text("SLIP PEKERJAAN", 148, 18.5);
 
       // Receipt general info metadata
+      const docNo = `GG-${Date.now()}`;
       doc.setTextColor(255, 255, 255);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
-      doc.text(`No. Dokumen: SG-${Date.now()}`, 145, 27);
+      doc.text(`No. Dokumen: ${docNo}`, 145, 27);
       doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 145, 31);
       doc.text("Status: LUNAS / REKONSILIASI", 145, 35);
 
@@ -819,6 +964,19 @@ export default function App() {
 
       // Save PDF to client download
       doc.save(`Slip_Gaji_${targetGroup.replace(/\s+/g, "_")}_${fTanggal}.pdf`);
+
+      // Save history record of this slip
+      const newHistoryItem = {
+        id: docNo,
+        grup: targetGroup,
+        tanggal: new Date().toISOString(),
+        gaji: totalHarianGaji,
+        jumlahKerja: unpaidItems.length,
+        adminPass: session?.nama || "Admin Perusahaan"
+      };
+      const updatedHistory = [newHistoryItem, ...slipHistory];
+      setSlipHistory(updatedHistory);
+      localStorage.setItem("gg_slip_history", JSON.stringify(updatedHistory));
 
       // 2. Call backend route to flag items as PAID (Lunas)
       const idList = unpaidItems.map((u) => u.ID);
@@ -1109,8 +1267,9 @@ export default function App() {
                     className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm text-[#1A1C18] focus:border-[#1A7F5A] focus:bg-white outline-none transition"
                   >
                     <option value="">— Pilih Lokasi —</option>
-                    <option value="Tongas">Gudang Tongas</option>
-                    <option value="Kraton">Kraton Production Mill</option>
+                    {dropdowns.lokasi.map((opt: any, idx: number) => (
+                      <option key={idx} value={opt.value}>{opt.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1163,10 +1322,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm text-[#1A1C18] focus:border-[#1A7F5A] focus:bg-white outline-none transition"
                       >
                         <option value="">— Pilih Aktivitas —</option>
-                        <option value="Bersih-bersih Gudang">Bersih-bersih Gudang</option>
-                        <option value="Proses Rebagging">Proses Rebagging</option>
-                        <option value="Perbaikan Mesin">Perbaikan Mesin</option>
-                        <option value="Pembangunan Fasilitas">Pembangunan Fasilitas</option>
+                        {dropdowns.aktivitas.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                         <option value="Lainnya">Lainnya (Tulis Baru...)</option>
                       </select>
                     </div>
@@ -1249,9 +1407,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Pilih Pupuk —</option>
-                        <option value="Granul">Organik Granul (Butiran)</option>
-                        <option value="Remah">Organik Remah (Curah)</option>
-                        <option value="Cair">Hayati Cair (Pupuk Cair)</option>
+                        {dropdowns.pupukJenis.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -1262,10 +1420,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Pilih Merek Bag —</option>
-                        <option value="Buah Ndaru">Buah Ndaru Premium</option>
-                        <option value="Ziraea">Ziraea Eco-Friendly</option>
-                        <option value="JE (Java Excellent)">JE (Java Excellent)</option>
-                        <option value="Polos">Karung Polos (Tanpa Merek)</option>
+                        {dropdowns.pupukMerek.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -1317,10 +1474,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Jenis —</option>
-                        <option value="Colt Diesel">Colt Diesel</option>
-                        <option value="Fuso">Fuso Ragasa</option>
-                        <option value="Tronton">Tronton Engkel</option>
-                        <option value="Gandeng">Gandeng Cargo</option>
+                        {dropdowns.trukJenis.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -1331,9 +1487,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Muatan —</option>
-                        <option value="Granul">Granul Pack</option>
-                        <option value="Remah">Remah Curah</option>
-                        <option value="Bahan Baku">Kotoran / Baku</option>
+                        {dropdowns.trukMuatan.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -1344,10 +1500,9 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Merek —</option>
-                        <option value="Buah Ndaru">Buah Ndaru</option>
-                        <option value="Ziraea">Ziraea</option>
-                        <option value="Java Excellent">Excellent</option>
-                        <option value="Polos">Kosongan</option>
+                        {dropdowns.trukMerek.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -1721,63 +1876,305 @@ export default function App() {
 
         {/* TAB 3: MANAJEMEN USER */}
         {activeTab === "user" && session.role === "owner" && (
-          <div className="space-y-6 max-w-2xl mx-auto">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-serif font-bold text-xl text-[#1A7F5A]">Daftar Mandor Operasional</h3>
-                <p className="text-xs text-gray-500 mt-1">Daftar akun mandor yang mempunyai hak masuk dan melaporkan hasil kerja borongannya.</p>
-              </div>
-              
+          <div className="space-y-6 max-w-2xl mx-auto pb-12 animate-fade-in">
+            {/* Sub-nav inside Tab 3 */}
+            <div className="flex border-b border-[#E3E5E2] pb-0.5 whitespace-nowrap overflow-x-auto gap-2 scrollbar-none">
               <button 
-                onClick={() => handleOpenUserModal("add")}
-                className="bg-[#1A7F5A] hover:bg-[#0F5C40] text-white font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm transition"
+                onClick={() => setAdminSubTab("users")}
+                className={`pb-3.5 px-3 font-semibold text-xs transition relative cursor-pointer ${adminSubTab === "users" ? "text-[#1A7F5A] font-bold" : "text-gray-500 hover:text-gray-900"}`}
               >
-                <Plus className="w-4 h-4" />
-                Tambah Mandor Baru
+                {adminSubTab === "users" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1A7F5A] rounded-full" />
+                )}
+                Atur Akun Mandor
+              </button>
+              <button 
+                onClick={() => setAdminSubTab("dropdowns")}
+                className={`pb-3.5 px-3 font-semibold text-xs transition relative cursor-pointer ${adminSubTab === "dropdowns" ? "text-[#1A7F5A] font-bold" : "text-gray-500 hover:text-gray-900"}`}
+              >
+                {adminSubTab === "dropdowns" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1A7F5A] rounded-full" />
+                )}
+                Kelola Dropdown Pilihan
+              </button>
+              <button 
+                onClick={() => setAdminSubTab("history")}
+                className={`pb-3.5 px-3 font-semibold text-xs transition relative cursor-pointer ${adminSubTab === "history" ? "text-[#1A7F5A] font-bold" : "text-gray-500 hover:text-gray-900"}`}
+              >
+                {adminSubTab === "history" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1A7F5A] rounded-full" />
+                )}
+                Histori Slip GG & Rekap
               </button>
             </div>
 
-            {isLoadingUsers ? (
-              <div className="text-center py-10 bg-white rounded-2xl border border-[#E3E5E2]">
-                <RefreshCw className="w-8 h-8 animate-spin text-[#1A7F5A] mx-auto mb-2" />
-                <p className="text-xs text-gray-500">Membaca daftar mandor...</p>
-              </div>
-            ) : (
-              <div className="bg-white border border-[#E3E5E2] rounded-2xl shadow-sm divide-y divide-[#E3E5E2] overflow-hidden">
-                {users.map((item) => (
-                  <div key={item.username} className="p-4 flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-sm text-gray-800">{item.nama}</h4>
-                      <p className="text-xs text-[#6B7068] mt-0.5">
-                        Username: <span className="font-semibold text-gray-700">@{item.username}</span> · Grup Kerja: <span className="font-semibold text-gray-700">{item.grup || item.nama}</span>
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {item.username === "owner" ? (
-                        <span className="text-[10px] font-extrabold bg-[#FBF3E2] text-[#A6781D] px-2.5 py-1 rounded">
-                          Primary Admin
-                        </span>
-                      ) : (
-                        <>
-                          <button
-                            onClick={() => handleOpenUserModal("edit", item)}
-                            className="p-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 text-xs transition inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                            Ganti Password
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUser(item.username)}
-                            className="p-1.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
-                    </div>
+            {/* SUB-TAB 1: MANAGING MANDOR ACCOUNTS */}
+            {adminSubTab === "users" && (
+              <div className="space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-serif font-bold text-lg text-gray-950">Daftar Akun Mandor</h3>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Daftar akun mandor aktif yang melapor ke sistem.</p>
                   </div>
-                ))}
+                  
+                  <button 
+                    onClick={() => handleOpenUserModal("add")}
+                    className="bg-[#1A7F5A] hover:bg-[#0F5C40] text-white font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer transition shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Tambah Mandor
+                  </button>
+                </div>
+
+                {isLoadingUsers ? (
+                  <div className="text-center py-10 bg-white rounded-2xl border border-[#E3E5E2]">
+                    <RefreshCw className="w-7 h-7 animate-spin text-[#1A7F5A] mx-auto mb-2" />
+                    <p className="text-xs text-gray-500">Membaca daftar mandor...</p>
+                  </div>
+                ) : (
+                  <div className="bg-white border border-[#E3E5E2] rounded-2xl shadow-sm divide-y divide-[#E3E5E2] overflow-hidden">
+                    {users.map((item) => (
+                      <div key={item.username} className="p-4 flex items-center justify-between">
+                        <div>
+                          <h4 className="font-bold text-sm text-gray-800">{item.nama}</h4>
+                          <p className="text-xs text-[#6B7068] mt-0.5">
+                            Username: <span className="font-semibold text-gray-700">@{item.username}</span> · Grup: <span className="font-semibold text-gray-700">{item.grup || item.nama}</span>
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          {item.username === "owner" ? (
+                            <span className="text-[10px] font-extrabold bg-[#FBF3E2] text-[#A6781D] px-2.5 py-1 rounded">
+                              Primary Owner
+                            </span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleOpenUserModal("edit", item)}
+                                className="p-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 text-[11px] font-medium transition inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                                Ganti Sandi
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(item.username)}
+                                className="p-1.5 border border-red-150 text-red-650 rounded-lg hover:bg-red-50 transition cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 animate-pulse" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-TAB 2: MANAGING DROPDOWNS */}
+            {adminSubTab === "dropdowns" && (
+              <div className="space-y-5 animate-fade-in">
+                <div>
+                  <h3 className="font-serif font-bold text-lg text-gray-950">Atur Dropdown Berkas</h3>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Kelola isi menu drop-down yang muncul pada formulir laporan operasional mandor.</p>
+                </div>
+
+                {/* Dropdown Tab Picker Selector */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { key: "lokasi", label: "Lokasi Kerja" },
+                    { key: "aktivitas", label: "Aktivitas Harian" },
+                    { key: "pupukJenis", label: "Jenis Pupuk" },
+                    { key: "pupukMerek", label: "Merek Pupuk" },
+                    { key: "trukJenis", label: "Jenis Truk" },
+                    { key: "trukMuatan", label: "Muatan Truk" },
+                    { key: "trukMerek", label: "Merek Truk" }
+                  ].map((cat) => (
+                    <button
+                      key={cat.key}
+                      onClick={() => {
+                        setSelectedCategory(cat.key as any);
+                        setEditingOptionIdx(null);
+                      }}
+                      className={`px-2.5 py-2 text-left rounded-xl border text-[11px] font-bold transition flex flex-col justify-between cursor-pointer ${selectedCategory === cat.key ? "border-[#1A7F5A] bg-[#E6F4EE] text-[#1A7F5A]" : "border-gray-200 bg-white hover:bg-gray-50 text-gray-700"}`}
+                    >
+                      <span>{cat.label}</span>
+                      <span className="text-[9px] font-normal text-gray-400 mt-1">({dropdowns[cat.key as keyof typeof DEFAULT_DROPDOWNS]?.length || 0} pilihan)</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Option Entries Table List */}
+                <div className="bg-white border border-[#E3E5E2] rounded-2xl shadow-sm p-5 space-y-4">
+                  <div className="border-b border-[#E3E5E2] pb-2">
+                    <h4 className="font-serif font-bold text-sm text-[#1A7F5A] capitalize">
+                      Menu Pilihan: {selectedCategory.replace(/([A-Z])/g, " $1")}
+                    </h4>
+                  </div>
+
+                  <div className="divide-y divide-gray-100 max-h-72 overflow-y-auto pr-1">
+                    {dropdowns[selectedCategory].length === 0 ? (
+                      <p className="text-center py-6 text-xs text-gray-400 font-medium">Belum ada pilihan pada kategori ini.</p>
+                    ) : (
+                      dropdowns[selectedCategory].map((opt, idx) => {
+                        const isEditing = editingOptionIdx === idx;
+                        return (
+                          <div key={idx} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                            {isEditing ? (
+                              <div className="flex-1 grid grid-cols-2 gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="Value/Kode (ID)"
+                                  value={editOptionValue}
+                                  onChange={(e) => setEditOptionValue(e.target.value)}
+                                  className="border border-[#E3E5E2] bg-[#F5F6F4] rounded-lg px-2 py-1 text-xs outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Nama Tampilan (Text)"
+                                  value={editOptionLabel}
+                                  onChange={(e) => setEditOptionLabel(e.target.value)}
+                                  className="border border-[#E3E5E2] bg-[#F5F6F4] rounded-lg px-2 py-1 text-xs outline-none"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex-1 min-w-0">
+                                <span className="font-bold text-gray-800">{opt.label}</span>
+                                <span className="text-[10px] text-gray-400 ml-1.5 font-mono">({opt.value})</span>
+                              </div>
+                            )}
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    onClick={() => handleSaveEditOption(selectedCategory, idx)}
+                                    className="bg-[#1A7F5A] text-white px-2 py-1 rounded text-[10px] font-bold cursor-pointer hover:bg-[#0F5C40]"
+                                  >
+                                    Simpan
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingOptionIdx(null)}
+                                    className="border border-gray-300 text-gray-700 px-2 py-1 rounded text-[10px] font-bold cursor-pointer hover:bg-gray-50"
+                                  >
+                                    Batal
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleStartEditOption(selectedCategory, idx)}
+                                    className="p-1 border border-gray-100 text-gray-500 rounded hover:bg-gray-50 cursor-pointer"
+                                    title="Ubah nama"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteOption(selectedCategory, idx)}
+                                    className="p-1 border border-red-50 text-red-550 rounded hover:bg-red-50 cursor-pointer"
+                                    title="Hapus pilihan"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Add Option Sub-Form */}
+                  <div className="pt-4 border-t border-[#E3E5E2] space-y-2.5 bg-[#FAFBF9] -mx-5 -mb-5 p-5 rounded-b-2xl">
+                    <h5 className="text-[11px] font-bold text-gray-700 uppercase tracking-wide">Tambah Pilihan Baru</h5>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="ID/Value (Contoh: jepara_c)"
+                        value={newOptionValue}
+                        onChange={(e) => setNewOptionValue(e.target.value)}
+                        className="bg-white border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs outline-none focus:border-[#1A7F5A]"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Nama Tampilan (Contoh: Jepara Custom)"
+                        value={newOptionLabel}
+                        onChange={(e) => setNewOptionLabel(e.target.value)}
+                        className="bg-white border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs outline-none focus:border-[#1A7F5A]"
+                      />
+                    </div>
+                    <button
+                      onClick={() => handleAddOption(selectedCategory)}
+                      className="w-full bg-[#1A7F5A] hover:bg-[#0F5C40] text-white font-bold text-xs py-2 rounded-xl transition cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Simpan Pilihan Baru ke Kategori ini
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 3: SLIP HISTORY LOG */}
+            {adminSubTab === "history" && (
+              <div className="space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-serif font-bold text-lg text-gray-950">Histori Rekap Gaji (GG)</h3>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Daftar slip gaji berkas yang berhasil diunduh dan diproses ke status Lunas.</p>
+                  </div>
+
+                  {slipHistory.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const confirm = window.confirm("Hapus semua histori rekaman cetakan lokal?");
+                        if (confirm) {
+                          setSlipHistory([]);
+                          localStorage.removeItem("gg_slip_history");
+                          triggerToast("Histori rekap dibersihkan.");
+                        }
+                      }}
+                      className="border border-red-200 text-red-650 hover:bg-red-50 text-[10px] font-bold px-3 py-1.5 rounded-lg cursor-pointer transition"
+                    >
+                      Dosa / Bersihkan Log
+                    </button>
+                  )}
+                </div>
+
+                <div className="bg-white border border-[#E3E5E2] rounded-2xl shadow-sm overflow-hidden divide-y divide-gray-100">
+                  {slipHistory.length === 0 ? (
+                    <div className="text-center py-12 text-gray-400">
+                      <FileCheck className="w-10 h-10 mx-auto mb-2.5 opacity-40" />
+                      <p className="text-xs font-semibold">Belum ada slip gaji yang dicetak.</p>
+                      <p className="text-[10px] mt-0.5">Setiap pencetakan akan otomatis direkam aman di panel monitor ini.</p>
+                    </div>
+                  ) : (
+                    slipHistory.map((item, idx) => (
+                      <div key={idx} className="p-4 flex items-center justify-between text-xs hover:bg-gray-50 transition">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-bold text-[#1A7F5A]">{item.id}</span>
+                            <span className="bg-[#E6F4EE] text-[#1A7F5A] text-[9px] font-bold px-1.5 py-0.5 rounded">Lunas</span>
+                          </div>
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            Penerima: <span className="font-bold text-gray-800">{item.grup}</span> · 
+                            Jumlah: <span className="font-medium text-gray-700">{item.jumlahKerja} baris kerja</span>
+                          </p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">
+                            Dicetak: {new Date(item.tanggal).toLocaleString("id-ID")} oleh {item.adminPass}
+                          </p>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-[10px] text-gray-400 block font-medium">Total Terbayar</span>
+                          <span className="text-[13px] font-bold text-gray-900 block">Rp {item.gaji?.toLocaleString("id-ID") || "0"}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>
