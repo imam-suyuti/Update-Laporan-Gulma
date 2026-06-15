@@ -483,7 +483,7 @@ async function uploadToGoogleDrive(base64: string, filename: string, mimeType: s
 // --- ENDPOINTS ---
 
 // Google OAuth Authorization Initiate
-app.get("/api/auth/google-url", (req, res) => {
+app.get(["/api/google-url", "/api/auth/google-url"], (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     return res.status(400).json({ error: "Google Client ID is not configured in .env files yet." });
