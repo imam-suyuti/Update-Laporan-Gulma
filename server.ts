@@ -4,11 +4,16 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import sql from "mssql";
+import mysql from "mysql2/promise";
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// MySQL connection pool manager (Lazy state)
+let mysqlPool: any = null;
+let mysqlErrorLogged = false;
 
 // SQL Server connection pool manager (Lazy state)
 let mssqlPool: sql.ConnectionPool | null = null;
@@ -121,6 +126,98 @@ async function getMssqlPool(): Promise<sql.ConnectionPool | null> {
   }
 }
 
+async function getMysqlPool(): Promise<any> {
+  const host = process.env.MYSQL_HOST || process.env.MYSQL_SERVER;
+  const user = process.env.MYSQL_USER;
+  const password = process.env.MYSQL_PASSWORD;
+  const database = process.env.MYSQL_DATABASE;
+
+  if (!host || !user) return null; // No MySQL configuration is provided
+
+  if (mysqlPool) return mysqlPool;
+
+  try {
+    console.log(`Connecting to MySQL Database: ${host}, DB: ${database}...`);
+    mysqlPool = await mysql.createPool({
+      host,
+      user,
+      password,
+      database,
+      port: Number(process.env.MYSQL_PORT) || 3306,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0
+    });
+    console.log("Connected to MySQL Database successfully!");
+    await initializeMysqlTables(mysqlPool);
+    return mysqlPool;
+  } catch (err) {
+    if (!mysqlErrorLogged) {
+      console.error("Failed to connect to MySQL Server, falling back:", err);
+      mysqlErrorLogged = true;
+    }
+    return null;
+  }
+}
+
+async function initializeMysqlTables(pool: any) {
+  try {
+    // 1. Create Grup_Mandor table if not exists (lowercase & exact names for total compatibility)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Grup_Mandor (
+        Username VARCHAR(100) PRIMARY KEY,
+        Nama VARCHAR(250) NOT NULL,
+        Password VARCHAR(250) NOT NULL,
+        Role VARCHAR(50) NOT NULL,
+        Grup VARCHAR(100) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // 2. Create Laporan table if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Laporan (
+        ID VARCHAR(100) PRIMARY KEY,
+        Tanggal VARCHAR(50) NOT NULL,
+        Lokasi VARCHAR(250) NOT NULL,
+        Grup VARCHAR(100) NOT NULL,
+        Jenis VARCHAR(50) NOT NULL,
+        Pekerjaan TEXT,
+        Jam VARCHAR(50),
+        Orang VARCHAR(50),
+        Kg_Produksi VARCHAR(50),
+        Jenis_Pupuk VARCHAR(100),
+        Merek_Pupuk VARCHAR(100),
+        Sopir VARCHAR(250),
+        Nopol VARCHAR(50),
+        Jenis_Truk VARCHAR(100),
+        Jenis_Muatan VARCHAR(100),
+        Merek_Muatan VARCHAR(100),
+        Kg_Angkut VARCHAR(50),
+        Link_Foto_Kerja TEXT,
+        Link_Surat_Jalan TEXT,
+        Link_Foto_Truk TEXT,
+        Gaji VARCHAR(50),
+        Status_Pembayaran VARCHAR(50)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+
+    // Seed default users if empty
+    const [rows]: [any[], any] = await pool.query("SELECT COUNT(*) as count FROM Grup_Mandor");
+    const count = rows[0]?.count || 0;
+    if (count === 0) {
+      console.log("Seeding default mandor/owner users to MySQL Database...");
+      for (const u of DEFAULT_USERS) {
+        await pool.query(
+          "INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup) VALUES (?, ?, ?, ?, ?)",
+          [u.username, u.nama, u.password, u.role, u.grup]
+        );
+      }
+    }
+  } catch (err) {
+    console.error("Error creating/initializing MySQL tables:", err);
+  }
+}
+
 // High limits for base64 photo uploads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -130,87 +227,16 @@ const CREDENTIALS_PATH = path.join(process.cwd(), "google-credentials.json");
 const LAPORAN_FALLBACK_PATH = path.join(process.cwd(), "laporan-fallback.json");
 const USERS_FALLBACK_PATH = path.join(process.cwd(), "users-fallback.json");
 
-const DEFAULT_LAPORAN = [
-  {
-    ID: "L-1723450000001",
-    Tanggal: "2026-06-12",
-    Lokasi: "Tongas",
-    Grup: "Grup Hasan",
-    Jenis: "harian",
-    Pekerjaan: "Rebag & Bersih-bersih Gudang",
-    Jam: "8",
-    Orang: "5",
-    Kg_Produksi: "",
-    Jenis_Pupuk: "",
-    Merek_Pupuk: "",
-    Sopir: "",
-    Nopol: "",
-    Jenis_Truk: "",
-    Jenis_Muatan: "",
-    Merek_Muatan: "",
-    Kg_Angkut: "",
-    Link_Foto_Kerja: "https://images.unsplash.com/photo-1590069261209-f8e9b8642343?auto=format&fit=crop&q=80&w=600",
-    Link_Surat_Jalan: "",
-    Link_Foto_Truk: "",
-    Gaji: "400000",
-    Status_Pembayaran: "Belum Lunas"
-  },
-  {
-    ID: "L-1723450000002",
-    Tanggal: "2026-06-13",
-    Lokasi: "Kraton",
-    Grup: "Grup Ali",
-    Jenis: "produksi",
-    Pekerjaan: "",
-    Jam: "",
-    Orang: "",
-    Kg_Produksi: "5000",
-    Jenis_Pupuk: "Granul",
-    Merek_Pupuk: "Buah Ndaru",
-    Sopir: "",
-    Nopol: "",
-    Jenis_Truk: "",
-    Jenis_Muatan: "",
-    Merek_Muatan: "",
-    Kg_Angkut: "",
-    Link_Foto_Kerja: "",
-    Link_Surat_Jalan: "",
-    Link_Foto_Truk: "",
-    Gaji: "200000",
-    Status_Pembayaran: "Belum Lunas"
-  },
-  {
-    ID: "L-1723450000003",
-    Tanggal: "2026-06-14",
-    Lokasi: "Tongas",
-    Grup: "Grup Budi",
-    Jenis: "angkut",
-    Pekerjaan: "",
-    Jam: "",
-    Orang: "",
-    Kg_Produksi: "",
-    Jenis_Pupuk: "",
-    Merek_Pupuk: "",
-    Sopir: "Slamet Jati",
-    Nopol: "N 8922 UK",
-    Jenis_Truk: "Colt Diesel",
-    Jenis_Muatan: "Granul",
-    Merek_Muatan: "Ziraea",
-    Kg_Angkut: "8000",
-    Link_Foto_Kerja: "",
-    Link_Surat_Jalan: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&q=80&w=600",
-    Link_Foto_Truk: "https://images.unsplash.com/photo-1601584115197-04ecc0da31d7?auto=format&fit=crop&q=80&w=600",
-    Gaji: "120000",
-    Status_Pembayaran: "Lunas"
-  }
-];
+const DEFAULT_LAPORAN = [];
 
 // Helper to load/save fallback database
 function getLocalLaporan(): any[] {
   if (!fs.existsSync(LAPORAN_FALLBACK_PATH)) {
     fs.writeFileSync(LAPORAN_FALLBACK_PATH, JSON.stringify(DEFAULT_LAPORAN, null, 2));
   }
-  return JSON.parse(fs.readFileSync(LAPORAN_FALLBACK_PATH, "utf-8"));
+  const data = JSON.parse(fs.readFileSync(LAPORAN_FALLBACK_PATH, "utf-8"));
+  // Remove existing fallback mock data that came packaged with original template
+  return data.filter((item: any) => !String(item.ID || "").startsWith("L-1723450000"));
 }
 
 function saveLocalLaporan(data: any[]) {
@@ -446,20 +472,67 @@ function parseSheetRows(values: any[][]): any[] {
 // --- API WORKSPACE HANDLERS ---
 
 async function fetchFromSheet(sheetName: string): Promise<any[]> {
-  // 1. Try SQL Server first
+  // 1. Try MySQL first (preferred for cPanel/phpMyAdmin shared hosting)
+  const myPool = await getMysqlPool();
+  if (myPool) {
+    try {
+      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
+      console.log(`Executing MySQL query: SELECT * FROM ${tableName}`);
+      const [rows] = await myPool.query(`SELECT * FROM ${tableName}`);
+      
+      return (rows as any[]).map(row => {
+        const normalized: any = {};
+        for (const k of Object.keys(row)) {
+          normalized[k] = row[k];
+          if (k === "Username") normalized.username = row[k];
+          if (k === "Nama") normalized.nama = row[k];
+          if (k === "Password") normalized.password = row[k];
+          if (k === "Role") normalized.role = row[k];
+          if (k === "Grup") normalized.grup = row[k];
+          if (k === "username") normalized.Username = row[k];
+          if (k === "nama") normalized.Nama = row[k];
+          if (k === "password") normalized.Password = row[k];
+          if (k === "role") normalized.Role = row[k];
+          if (k === "grup") normalized.Grup = row[k];
+        }
+        return normalized;
+      });
+    } catch (err) {
+      console.error(`Error querying ${sheetName} from MySQL database:`, err);
+    }
+  }
+
+  // 2. Try SQL Server next
   const pool = await getMssqlPool();
   if (pool) {
     try {
       const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
       console.log(`Executing SQL Server query: SELECT * FROM ${tableName}`);
       const result = await pool.request().query(`SELECT * FROM ${tableName}`);
-      return result.recordset;
+      
+      return result.recordset.map(row => {
+        const normalized: any = {};
+        for (const k of Object.keys(row)) {
+          normalized[k] = row[k];
+          if (k === "Username") normalized.username = row[k];
+          if (k === "Nama") normalized.nama = row[k];
+          if (k === "Password") normalized.password = row[k];
+          if (k === "Role") normalized.role = row[k];
+          if (k === "Grup") normalized.grup = row[k];
+          if (k === "username") normalized.Username = row[k];
+          if (k === "nama") normalized.Nama = row[k];
+          if (k === "password") normalized.Password = row[k];
+          if (k === "role") normalized.Role = row[k];
+          if (k === "grup") normalized.Grup = row[k];
+        }
+        return normalized;
+      });
     } catch (err) {
       console.error(`Error querying ${sheetName} from SQL Server database:`, err);
     }
   }
 
-  // 2. Fall back to Google Sheets or Local storage
+  // 3. Fall back to Google Sheets or Local storage
   const token = await getGoogleAccessToken();
   if (!token) {
     // Falls back to local json file
@@ -487,7 +560,81 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
 }
 
 async function writeToSheet(sheetName: string, items: any[]) {
-  // 1. Try SQL Server first
+  // 1. Try MySQL first
+  const myPool = await getMysqlPool();
+  if (myPool) {
+    try {
+      const tableName = sheetName === "Laporan" ? "Laporan" : "Grup_Mandor";
+      console.log(`Overwriting MySQL table: ${tableName} with ${items.length} records`);
+      
+      const connection = await myPool.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.query(`DELETE FROM ${tableName}`);
+        
+        if (sheetName === "Laporan") {
+          for (const item of items) {
+            await connection.query(`
+              INSERT INTO Laporan (
+                ID, Tanggal, Lokasi, Grup, Jenis, Pekerjaan, Jam, Orang, 
+                Kg_Produksi, Jenis_Pupuk, Merek_Pupuk, Sopir, Nopol, Jenis_Truk, 
+                Jenis_Muatan, Merek_Muatan, Kg_Angkut, Link_Foto_Kerja, Link_Surat_Jalan, 
+                Link_Foto_Truk, Gaji, Status_Pembayaran
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+              item.ID || item.id || `L-${Date.now()}-${Math.round(Math.random()*1000)}`,
+              item.Tanggal || item.tanggal || "",
+              item.Lokasi || item.lokasi || "",
+              item.Grup || item.grup || "",
+              item.Jenis || item.jenis || "",
+              item.Pekerjaan || item.pekerjaan || "",
+              item.Jam || item.jam || "",
+              item.Orang || item.orang || "",
+              item.Kg_Produksi || item.kg_produksi || "",
+              item.Jenis_Pupuk || item.jenis_pupuk || "",
+              item.Merek_Pupuk || item.merek_pupuk || "",
+              item.Sopir || item.sopir || "",
+              item.Nopol || item.nopol || "",
+              item.Jenis_Truk || item.jenis_truk || "",
+              item.Jenis_Muatan || item.jenis_muatan || "",
+              item.Merek_Muatan || item.merek_muatan || "",
+              item.Kg_Angkut || item.kg_angkut || "",
+              item.Link_Foto_Kerja || item.link_foto_kerja || "",
+              item.Link_Surat_Jalan || item.link_surat_jalan || "",
+              item.Link_Foto_Truk || item.link_foto_truk || "",
+              String(item.Gaji || item.gaji || "0"),
+              item.Status_Pembayaran || item.status_pembayaran || "Belum Lunas"
+            ]);
+          }
+        } else {
+          // Grup_Mandor
+          for (const item of items) {
+            await connection.query(`
+              INSERT INTO Grup_Mandor (Username, Nama, Password, Role, Grup)
+              VALUES (?, ?, ?, ?, ?)
+            `, [
+              item.Username || item.username || "",
+              item.Nama || item.nama || "",
+              item.Password || item.password || "",
+              item.Role || item.role || "mandor",
+              item.Grup || item.grup || ""
+            ]);
+          }
+        }
+        await connection.commit();
+        return; // Success, skip sheet/SQL Server writing
+      } catch (innerErr) {
+        await connection.rollback();
+        throw innerErr;
+      } finally {
+        connection.release();
+      }
+    } catch (err) {
+      console.error(`Error saving ${sheetName} to MySQL database, falling back:`, err);
+    }
+  }
+
+  // 2. Try SQL Server next
   const pool = await getMssqlPool();
   if (pool) {
     try {
@@ -503,28 +650,28 @@ async function writeToSheet(sheetName: string, items: any[]) {
         if (sheetName === "Laporan") {
           for (const item of items) {
             await transaction.request()
-              .input("ID", sql.NVarChar, item.ID || `L-${Date.now()}-${Math.round(Math.random()*1000)}`)
-              .input("Tanggal", sql.NVarChar, item.Tanggal || "")
-              .input("Lokasi", sql.NVarChar, item.Lokasi || "")
-              .input("Grup", sql.NVarChar, item.Grup || "")
-              .input("Jenis", sql.NVarChar, item.Jenis || "")
-              .input("Pekerjaan", sql.NVarChar, item.Pekerjaan || "")
-              .input("Jam", sql.NVarChar, item.Jam || "")
-              .input("Orang", sql.NVarChar, item.Orang || "")
-              .input("Kg_Produksi", sql.NVarChar, item.Kg_Produksi || "")
-              .input("Jenis_Pupuk", sql.NVarChar, item.Jenis_Pupuk || "")
-              .input("Merek_Pupuk", sql.NVarChar, item.Merek_Pupuk || "")
-              .input("Sopir", sql.NVarChar, item.Sopir || "")
-              .input("Nopol", sql.NVarChar, item.Nopol || "")
-              .input("Jenis_Truk", sql.NVarChar, item.Jenis_Truk || "")
-              .input("Jenis_Muatan", sql.NVarChar, item.Jenis_Muatan || "")
-              .input("Merek_Muatan", sql.NVarChar, item.Merek_Muatan || "")
-              .input("Kg_Angkut", sql.NVarChar, item.Kg_Angkut || "")
-              .input("Link_Foto_Kerja", sql.NVarChar, item.Link_Foto_Kerja || "")
-              .input("Link_Surat_Jalan", sql.NVarChar, item.Link_Surat_Jalan || "")
-              .input("Link_Foto_Truk", sql.NVarChar, item.Link_Foto_Truk || "")
-              .input("Gaji", sql.NVarChar, String(item.Gaji || "0"))
-              .input("Status_Pembayaran", sql.NVarChar, item.Status_Pembayaran || "Belum Lunas")
+              .input("ID", sql.NVarChar, item.ID || item.id || `L-${Date.now()}-${Math.round(Math.random()*1000)}`)
+              .input("Tanggal", sql.NVarChar, item.Tanggal || item.tanggal || "")
+              .input("Lokasi", sql.NVarChar, item.Lokasi || item.lokasi || "")
+              .input("Grup", sql.NVarChar, item.Grup || item.grup || "")
+              .input("Jenis", sql.NVarChar, item.Jenis || item.jenis || "")
+              .input("Pekerjaan", sql.NVarChar, item.Pekerjaan || item.pekerjaan || "")
+              .input("Jam", sql.NVarChar, item.Jam || item.jam || "")
+              .input("Orang", sql.NVarChar, item.Orang || item.orang || "")
+              .input("Kg_Produksi", sql.NVarChar, item.Kg_Produksi || item.kg_produksi || "")
+              .input("Jenis_Pupuk", sql.NVarChar, item.Jenis_Pupuk || item.jenis_pupuk || "")
+              .input("Merek_Pupuk", sql.NVarChar, item.Merek_Pupuk || item.merek_pupuk || "")
+              .input("Sopir", sql.NVarChar, item.Sopir || item.sopir || "")
+              .input("Nopol", sql.NVarChar, item.Nopol || item.nopol || "")
+              .input("Jenis_Truk", sql.NVarChar, item.Jenis_Truk || item.jenis_truk || "")
+              .input("Jenis_Muatan", sql.NVarChar, item.Jenis_Muatan || item.jenis_muatan || "")
+              .input("Merek_Muatan", sql.NVarChar, item.Merek_Muatan || item.merek_muatan || "")
+              .input("Kg_Angkut", sql.NVarChar, item.Kg_Angkut || item.kg_angkut || "")
+              .input("Link_Foto_Kerja", sql.NVarChar, item.Link_Foto_Kerja || item.link_foto_kerja || "")
+              .input("Link_Surat_Jalan", sql.NVarChar, item.Link_Surat_Jalan || item.link_surat_jalan || "")
+              .input("Link_Foto_Truk", sql.NVarChar, item.Link_Foto_Truk || item.link_foto_truk || "")
+              .input("Gaji", sql.NVarChar, String(item.Gaji || item.gaji || "0"))
+              .input("Status_Pembayaran", sql.NVarChar, item.Status_Pembayaran || item.status_pembayaran || "Belum Lunas")
               .query(`
                 INSERT INTO Laporan (
                   ID, Tanggal, Lokasi, Grup, Jenis, Pekerjaan, Jam, Orang, 
@@ -679,6 +826,17 @@ async function uploadToGoogleDrive(base64: string, filename: string, mimeType: s
 
 // --- ENDPOINTS ---
 
+// Dynamic and safe Redirect URI calculator
+function getRedirectUri(req: any): string {
+  const appUrl = process.env.APP_URL;
+  if (appUrl && appUrl.startsWith("http") && !appUrl.includes("MY_APP_URL") && !appUrl.includes("your-app")) {
+    return `${appUrl.replace(/\/$/, "")}/auth/callback`;
+  }
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
+  const proto = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
+  return `${proto}://${host}/auth/callback`;
+}
+
 // Google OAuth Authorization Initiate
 app.get(["/api/google-url", "/api/auth/google-url"], (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -686,15 +844,7 @@ app.get(["/api/google-url", "/api/auth/google-url"], (req, res) => {
     return res.status(400).json({ error: "Google Client ID is not configured in .env files yet." });
   }
 
-  // Automatically determine the correct host and secure protocol (HTTPS for remote domains, HTTP for local)
-  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
-  const proto = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
-  let redirectUri = `${proto}://${host}/auth/callback`;
-
-  // Always prefer configured APP_URL if present, falling back to dynamic identification
-  if (process.env.APP_URL) {
-    redirectUri = `${process.env.APP_URL}/auth/callback`;
-  }
+  const redirectUri = getRedirectUri(req);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -720,14 +870,7 @@ app.get(["/auth/callback", "/auth/callback/"], async (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
-  // Re-construct the exact redirectUri that matched the authorization flow
-  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
-  const proto = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
-  let redirectUri = `${proto}://${host}/auth/callback`;
-
-  if (process.env.APP_URL) {
-    redirectUri = `${process.env.APP_URL}/auth/callback`;
-  }
+  const redirectUri = getRedirectUri(req);
 
   if (!code || !clientId || !clientSecret) {
     return res.send(`
