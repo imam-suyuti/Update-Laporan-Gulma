@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // High limits for base64 photo uploads
 app.use(express.json({ limit: "50mb" }));
@@ -648,9 +648,9 @@ app.post("/api/auth/login", async (req, res) => {
   try {
     const users = await fetchFromSheet("Grup_Mandor");
     const found = users.find((u) => {
-      const uName = String(u.Username || u.username || "");
-      const uPass = String(u.Password || u.password || "");
-      return uName.toLowerCase() === username.trim().toLowerCase() && uPass === password;
+      const uName = String(u.Username || u.username || "").trim();
+      const uPass = String(u.Password || u.password || "").trim();
+      return uName.toLowerCase() === String(username).trim().toLowerCase() && uPass === String(password).trim();
     });
 
     if (found) {
