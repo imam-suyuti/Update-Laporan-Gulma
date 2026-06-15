@@ -686,7 +686,16 @@ app.get(["/api/google-url", "/api/auth/google-url"], (req, res) => {
     return res.status(400).json({ error: "Google Client ID is not configured in .env files yet." });
   }
 
-  const redirectUri = `${process.env.APP_URL || "http://localhost:3000"}/auth/callback`;
+  // Automatically determine the correct host and secure protocol (HTTPS for remote domains, HTTP for local)
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
+  const proto = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
+  let redirectUri = `${proto}://${host}/auth/callback`;
+
+  // Always prefer configured APP_URL if present, falling back to dynamic identification
+  if (process.env.APP_URL) {
+    redirectUri = `${process.env.APP_URL}/auth/callback`;
+  }
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -710,7 +719,15 @@ app.get(["/auth/callback", "/auth/callback/"], async (req, res) => {
   const { code } = req.query;
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = `${process.env.APP_URL || "http://localhost:3000"}/auth/callback`;
+
+  // Re-construct the exact redirectUri that matched the authorization flow
+  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost:3000";
+  const proto = (host.includes("localhost") || host.includes("127.0.0.1")) ? "http" : "https";
+  let redirectUri = `${proto}://${host}/auth/callback`;
+
+  if (process.env.APP_URL) {
+    redirectUri = `${process.env.APP_URL}/auth/callback`;
+  }
 
   if (!code || !clientId || !clientSecret) {
     return res.send(`
