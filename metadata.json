@@ -1,0 +1,6 @@
+{
+  "name": "Laporan Hasil Kerja & Slip Gaji",
+  "description": "Laporan harian hasil kerja terintegrasi Google Sheets dan Drive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
