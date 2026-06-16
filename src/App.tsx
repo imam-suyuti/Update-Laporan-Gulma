@@ -64,12 +64,6 @@ const DEFAULT_DROPDOWNS = {
     { value: "Granul", label: "Granul Pack" },
     { value: "Remah", label: "Remah Curah" },
     { value: "Bahan Baku", label: "Kotoran / Baku" }
-  ],
-  trukMerek: [
-    { value: "Buah Ndaru", label: "Buah Ndaru" },
-    { value: "Ziraea", label: "Ziraea" },
-    { value: "Java Excellent", label: "Excellent" },
-    { value: "Polos", label: "Kosongan" }
   ]
 };
 
@@ -93,13 +87,7 @@ export default function App() {
   const [adminSubTab, setAdminSubTab] = useState<"users" | "dropdowns" | "history">("users");
 
   // --- DROPDOWN MANAGE STATES ---
-  const [dropdowns, setDropdowns] = useState<typeof DEFAULT_DROPDOWNS>(() => {
-    const saved = localStorage.getItem("gg_dropdowns");
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { return DEFAULT_DROPDOWNS; }
-    }
-    return DEFAULT_DROPDOWNS;
-  });
+  const [dropdowns, setDropdowns] = useState<typeof DEFAULT_DROPDOWNS>(DEFAULT_DROPDOWNS);
 
   const [selectedCategory, setSelectedCategory] = useState<keyof typeof DEFAULT_DROPDOWNS>("lokasi");
   const [newOptionValue, setNewOptionValue] = useState("");
@@ -109,13 +97,7 @@ export default function App() {
   const [editOptionLabel, setEditOptionLabel] = useState("");
 
   // --- SLIP PRINT HISTORY ---
-  const [slipHistory, setSlipHistory] = useState<any[]>(() => {
-    const saved = localStorage.getItem("gg_slip_history");
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { return []; }
-    }
-    return [];
-  });
+  const [slipHistory, setSlipHistory] = useState<any[]>([]);
 
   // --- DATA LISTS ---
   const [reports, setReports] = useState<ReportEntry[]>([]);
@@ -177,6 +159,10 @@ export default function App() {
 
   // --- LIFECYCLES ---
   useEffect(() => {
+    loadDropdowns();
+  }, []);
+
+  useEffect(() => {
     checkGoogleStatus();
   }, [session]);
 
@@ -185,6 +171,7 @@ export default function App() {
       loadReports();
       if (session.role === "owner") {
         loadUsers();
+        loadHistory();
       }
     }
   }, [session, activeTab]);
@@ -222,6 +209,74 @@ export default function App() {
       }
     } catch (err) {
       console.error("Gagal memeriksa integrasi Google:", err);
+    }
+  };
+
+  const loadDropdowns = async () => {
+    try {
+      const res = await fetch("/api/dropdowns");
+      if (res.ok) {
+        const body = await res.json();
+        const list = body.data || [];
+        if (list.length > 0) {
+          const newDropdowns = {
+            lokasi: list.filter((i: any) => (i.Kategori || i.kategori) === "lokasi").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            aktivitas: list.filter((i: any) => (i.Kategori || i.kategori) === "aktivitas").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            pupukJenis: list.filter((i: any) => (i.Kategori || i.kategori) === "pupukJenis").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            pupukMerek: list.filter((i: any) => (i.Kategori || i.kategori) === "pupukMerek").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            trukJenis: list.filter((i: any) => (i.Kategori || i.kategori) === "trukJenis").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            trukMuatan: list.filter((i: any) => (i.Kategori || i.kategori) === "trukMuatan").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+          };
+          setDropdowns(newDropdowns);
+        } else {
+          // Sync current default dropdowns to have seed on sheet
+          await syncDropdownsWithSheets(DEFAULT_DROPDOWNS);
+        }
+      }
+    } catch (err) {
+      console.error("Gagal memuat dropdown dari Google Sheets:", err);
+    }
+  };
+
+  const syncDropdownsWithSheets = async (nextDropdowns: typeof DEFAULT_DROPDOWNS) => {
+    try {
+      const items: any[] = [];
+      Object.keys(nextDropdowns).forEach((cat) => {
+        const list = (nextDropdowns as any)[cat] || [];
+        list.forEach((opt: any) => {
+          items.push({
+            Kategori: cat,
+            Value: opt.value,
+            Label: opt.label,
+          });
+        });
+      });
+
+      const res = await fetch("/api/dropdowns/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (res.ok) {
+        setDropdowns(nextDropdowns);
+      } else {
+        triggerToast("Gagal menyinkronkan menu pilihan ke Google Sheets.", "error");
+      }
+    } catch (err) {
+      console.error("Error saving dropdowns:", err);
+      triggerToast("Koneksi gagal menyinkronkan data drop-down.", "error");
+    }
+  };
+
+  const loadHistory = async () => {
+    try {
+      const res = await fetch("/api/history");
+      if (res.ok) {
+        const body = await res.json();
+        setSlipHistory(body.data || []);
+      }
+    } catch (err) {
+      console.error("Gagal memuat histori slip:", err);
     }
   };
 
@@ -645,7 +700,7 @@ export default function App() {
   };
 
   // --- DROPDOWN CRUD FUNCTIONS ---
-  const handleAddOption = (category: keyof typeof DEFAULT_DROPDOWNS) => {
+  const handleAddOption = async (category: keyof typeof DEFAULT_DROPDOWNS) => {
     if (!newOptionValue.trim() || !newOptionLabel.trim()) {
       triggerToast("⚠ Harap isi Kode (Value) dan Label Pilihan.", "error");
       return;
@@ -657,11 +712,11 @@ export default function App() {
     }
     const updatedOptions = [...dropdowns[category], { value: newOptionValue.trim(), label: newOptionLabel.trim() }];
     const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
-    setDropdowns(nextDropdowns);
-    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    
+    await syncDropdownsWithSheets(nextDropdowns);
     setNewOptionValue("");
     setNewOptionLabel("");
-    triggerToast("✓ Berhasil menambah pilihan baru!");
+    triggerToast("✓ Berhasil menambah pilihan baru ke Google Sheets!");
   };
 
   const handleStartEditOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
@@ -671,7 +726,7 @@ export default function App() {
     setEditOptionLabel(item.label);
   };
 
-  const handleSaveEditOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
+  const handleSaveEditOption = async (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
     if (!editOptionValue.trim() || !editOptionLabel.trim()) {
       triggerToast("⚠ Nama Kode dan Label tidak boleh kosong.", "error");
       return;
@@ -679,19 +734,19 @@ export default function App() {
     const updatedOptions = [...dropdowns[category]];
     updatedOptions[idx] = { value: editOptionValue.trim(), label: editOptionLabel.trim() };
     const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
-    setDropdowns(nextDropdowns);
-    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    
+    await syncDropdownsWithSheets(nextDropdowns);
     setEditingOptionIdx(null);
-    triggerToast("✓ Berhasil menyimpan perubahan!");
+    triggerToast("✓ Berhasil menyimpan perubahan ke Google Sheets!");
   };
 
-  const handleDeleteOption = (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
+  const handleDeleteOption = async (category: keyof typeof DEFAULT_DROPDOWNS, idx: number) => {
     const confirm = window.confirm(`Hapus pilihan "${dropdowns[category][idx].label}" dari dropdown?`);
     if (!confirm) return;
     const updatedOptions = dropdowns[category].filter((_, i) => i !== idx);
     const nextDropdowns = { ...dropdowns, [category]: updatedOptions };
-    setDropdowns(nextDropdowns);
-    localStorage.setItem("gg_dropdowns", JSON.stringify(nextDropdowns));
+    
+    await syncDropdownsWithSheets(nextDropdowns);
     triggerToast("✓ Berhasil menghapus pilihan.");
   };
 
@@ -965,7 +1020,7 @@ export default function App() {
       // Save PDF to client download
       doc.save(`Slip_Gaji_${targetGroup.replace(/\s+/g, "_")}_${fTanggal}.pdf`);
 
-      // Save history record of this slip
+      // Save history record of this slip to Google Sheets
       const newHistoryItem = {
         id: docNo,
         grup: targetGroup,
@@ -974,9 +1029,17 @@ export default function App() {
         jumlahKerja: unpaidItems.length,
         adminPass: session?.nama || "Admin Perusahaan"
       };
-      const updatedHistory = [newHistoryItem, ...slipHistory];
-      setSlipHistory(updatedHistory);
-      localStorage.setItem("gg_slip_history", JSON.stringify(updatedHistory));
+      
+      try {
+        await fetch("/api/history/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item: newHistoryItem }),
+        });
+        loadHistory();
+      } catch (err) {
+        console.error("Gagal menyimpan histori slip ke Sheets:", err);
+      }
 
       // 2. Call backend route to flag items as PAID (Lunas)
       const idList = unpaidItems.map((u) => u.ID);
@@ -1500,7 +1563,7 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Merek —</option>
-                        {dropdowns.trukMerek.map((opt: any, idx: number) => (
+                        {dropdowns.pupukMerek.map((opt: any, idx: number) => (
                           <option key={idx} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
@@ -1981,15 +2044,14 @@ export default function App() {
                 </div>
 
                 {/* Dropdown Tab Picker Selector */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {[
                     { key: "lokasi", label: "Lokasi Kerja" },
                     { key: "aktivitas", label: "Aktivitas Harian" },
                     { key: "pupukJenis", label: "Jenis Pupuk" },
-                    { key: "pupukMerek", label: "Merek Pupuk" },
+                    { key: "pupukMerek", label: "Merek (Pupuk & Truk)" },
                     { key: "trukJenis", label: "Jenis Truk" },
-                    { key: "trukMuatan", label: "Muatan Truk" },
-                    { key: "trukMerek", label: "Merek Truk" }
+                    { key: "trukMuatan", label: "Muatan Truk" }
                   ].map((cat) => (
                     <button
                       key={cat.key}

@@ -25,8 +25,39 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 const CREDENTIALS_PATH = path.join(process.cwd(), "google-credentials.json");
 const LAPORAN_FALLBACK_PATH = path.join(process.cwd(), "laporan-fallback.json");
 const USERS_FALLBACK_PATH = path.join(process.cwd(), "users-fallback.json");
+const DROPDOWN_FALLBACK_PATH = path.join(process.cwd(), "dropdown-fallback.json");
+const HISTORY_FALLBACK_PATH = path.join(process.cwd(), "history-fallback.json");
 
 const DEFAULT_LAPORAN = [];
+
+const DEFAULT_DROPDOWNS_SERVER = [
+  // lokasi
+  { Kategori: "lokasi", Value: "Tongas", Label: "Gudang Tongas" },
+  { Kategori: "lokasi", Value: "Kraton", Label: "Kraton Production Mill" },
+  // aktivitas
+  { Kategori: "aktivitas", Value: "Bersih-bersih Gudang", Label: "Bersih-bersih Gudang" },
+  { Kategori: "aktivitas", Value: "Proses Rebagging", Label: "Proses Rebagging" },
+  { Kategori: "aktivitas", Value: "Perbaikan Mesin", Label: "Perbaikan Mesin" },
+  { Kategori: "aktivitas", Value: "Pembangunan Fasilitas", Label: "Pembangunan Fasilitas" },
+  // pupukJenis
+  { Kategori: "pupukJenis", Value: "Granul", Label: "Organik Granul (Butiran)" },
+  { Kategori: "pupukJenis", Value: "Remah", Label: "Organik Remah (Curah)" },
+  { Kategori: "pupukJenis", Value: "Cair", Label: "Hayati Cair (Pupuk Cair)" },
+  // pupukMerek (Shared with shipping brand as per instructions)
+  { Kategori: "pupukMerek", Value: "Buah Ndaru", Label: "Buah Ndaru Premium" },
+  { Kategori: "pupukMerek", Value: "Ziraea", Label: "Ziraea Eco-Friendly" },
+  { Kategori: "pupukMerek", Value: "JE (Java Excellent)", Label: "JE (Java Excellent)" },
+  { Kategori: "pupukMerek", Value: "Polos", Label: "Karung Polos (Tanpa Merek)" },
+  // trukJenis
+  { Kategori: "trukJenis", Value: "Colt Diesel", Label: "Colt Diesel" },
+  { Kategori: "trukJenis", Value: "Fuso", Label: "Fuso Ragasa" },
+  { Kategori: "trukJenis", Value: "Tronton", Label: "Tronton Engkel" },
+  { Kategori: "trukJenis", Value: "Gandeng", Label: "Gandeng Cargo" },
+  // trukMuatan
+  { Kategori: "trukMuatan", Value: "Granul", Label: "Granul Pack" },
+  { Kategori: "trukMuatan", Value: "Remah", Label: "Remah Curah" },
+  { Kategori: "trukMuatan", Value: "Bahan Baku", Label: "Kotoran / Baku" }
+];
 
 // Helper to load/save fallback database
 function getLocalLaporan(): any[] {
@@ -51,6 +82,28 @@ function getLocalUsers(): any[] {
 
 function saveLocalUsers(data: any[]) {
   fs.writeFileSync(USERS_FALLBACK_PATH, JSON.stringify(data, null, 2));
+}
+
+function getLocalDropdowns(): any[] {
+  if (!fs.existsSync(DROPDOWN_FALLBACK_PATH)) {
+    fs.writeFileSync(DROPDOWN_FALLBACK_PATH, JSON.stringify(DEFAULT_DROPDOWNS_SERVER, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(DROPDOWN_FALLBACK_PATH, "utf-8"));
+}
+
+function saveLocalDropdowns(data: any[]) {
+  fs.writeFileSync(DROPDOWN_FALLBACK_PATH, JSON.stringify(data, null, 2));
+}
+
+function getLocalHistory(): any[] {
+  if (!fs.existsSync(HISTORY_FALLBACK_PATH)) {
+    fs.writeFileSync(HISTORY_FALLBACK_PATH, JSON.stringify([], null, 2));
+  }
+  return JSON.parse(fs.readFileSync(HISTORY_FALLBACK_PATH, "utf-8"));
+}
+
+function saveLocalHistory(data: any[]) {
+  fs.writeFileSync(HISTORY_FALLBACK_PATH, JSON.stringify(data, null, 2));
 }
 
 // --- GOOGLE OAUTH UTILS ---
@@ -268,6 +321,78 @@ function parseSheetRows(values: any[][]): any[] {
   return items;
 }
 
+// Ensure that specific sheet tabs exist inside the Google Spreadsheet
+async function ensureWorksheetExists(spreadsheetId: string, token: string, sheetName: string) {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  try {
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`, {
+      headers
+    });
+    if (!response.ok) return;
+
+    const data: any = await response.json();
+    const sheets = data.sheets || [];
+    const exists = sheets.some((s: any) => s.properties?.title === sheetName);
+
+    if (!exists) {
+      console.log(`Worksheet ${sheetName} does not exist. Creating...`);
+      const createRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/:batchUpdate`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: { title: sheetName },
+              },
+            },
+          ],
+        }),
+      });
+
+      if (!createRes.ok) {
+        console.error(`Failed to create sheet ${sheetName}:`, await createRes.text());
+        return;
+      }
+
+      // Seed headers
+      let headerRow: string[] = [];
+      if (sheetName === "Dropdown_Pilihan") {
+        headerRow = ["Kategori", "Value", "Label"];
+      } else if (sheetName === "Histori_Slip") {
+        headerRow = ["ID", "Grup", "Tanggal", "Gaji", "Jumlah_Kerja", "Admin_Pass"];
+      }
+
+      if (headerRow.length > 0) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:Z1?valueInputOption=RAW`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({
+            values: [headerRow],
+          }),
+        });
+
+        if (sheetName === "Dropdown_Pilihan") {
+          const rows = DEFAULT_DROPDOWNS_SERVER.map((d: any) => [d.Kategori, d.Value, d.Label]);
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:C${rows.length + 1}?valueInputOption=RAW`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              values: rows,
+            }),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Error ensuring worksheet ${sheetName}:`, err);
+  }
+}
+
 // --- API WORKSPACE HANDLERS ---
 
 async function fetchFromSheet(sheetName: string): Promise<any[]> {
@@ -276,11 +401,18 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
   if (!token) {
     // Falls back to local json file
     if (sheetName === "Laporan") return getLocalLaporan();
+    if (sheetName === "Dropdown_Pilihan") return getLocalDropdowns();
+    if (sheetName === "Histori_Slip") return getLocalHistory();
     return getLocalUsers();
   }
 
   try {
     const { spreadsheetId } = await getDriveResources(token);
+
+    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip") {
+      await ensureWorksheetExists(spreadsheetId, token, sheetName);
+    }
+
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:Z5000`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -294,6 +426,8 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
   } catch (err) {
     console.error(`Error reading ${sheetName} from Google Sheets. Using local fallback.`, err);
     if (sheetName === "Laporan") return getLocalLaporan();
+    if (sheetName === "Dropdown_Pilihan") return getLocalDropdowns();
+    if (sheetName === "Histori_Slip") return getLocalHistory();
     return getLocalUsers();
   }
 }
@@ -303,25 +437,43 @@ async function writeToSheet(sheetName: string, items: any[]) {
   const token = await getGoogleAccessToken();
   if (!token) {
     if (sheetName === "Laporan") saveLocalLaporan(items);
+    else if (sheetName === "Dropdown_Pilihan") saveLocalDropdowns(items);
+    else if (sheetName === "Histori_Slip") saveLocalHistory(items);
     else saveLocalUsers(items);
     return;
   }
 
   try {
     const { spreadsheetId } = await getDriveResources(token);
-    const headers = sheetName === "Laporan"
-      ? [
-          "ID", "Tanggal", "Lokasi", "Grup", "Jenis", "Pekerjaan", "Jam", "Orang", 
-          "Kg_Produksi", "Jenis_Pupuk", "Merek_Pupuk", "Sopir", "Nopol", "Jenis_Truk", 
-          "Jenis_Muatan", "Merek_Muatan", "Kg_Angkut", "Link_Foto_Kerja", "Link_Surat_Jalan", 
-          "Link_Foto_Truk", "Gaji", "Status_Pembayaran"
-        ]
-      : ["Username", "Nama", "Password", "Role", "Grup"];
+
+    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip") {
+      await ensureWorksheetExists(spreadsheetId, token, sheetName);
+    }
+
+    let headers: string[];
+    if (sheetName === "Laporan") {
+      headers = [
+        "ID", "Tanggal", "Lokasi", "Grup", "Jenis", "Pekerjaan", "Jam", "Orang", 
+        "Kg_Produksi", "Jenis_Pupuk", "Merek_Pupuk", "Sopir", "Nopol", "Jenis_Truk", 
+        "Jenis_Muatan", "Merek_Muatan", "Kg_Angkut", "Link_Foto_Kerja", "Link_Surat_Jalan", 
+        "Link_Foto_Truk", "Gaji", "Status_Pembayaran"
+      ];
+    } else if (sheetName === "Grup_Mandor") {
+      headers = ["Username", "Nama", "Password", "Role", "Grup"];
+    } else if (sheetName === "Dropdown_Pilihan") {
+      headers = ["Kategori", "Value", "Label"];
+    } else if (sheetName === "Histori_Slip") {
+      headers = ["ID", "Grup", "Tanggal", "Gaji", "Jumlah_Kerja", "Admin_Pass"];
+    } else {
+      headers = [];
+    }
 
     const values = [headers];
     items.forEach((item) => {
       const row = headers.map((h) => {
-        const val = item[h];
+        // Support underscore names mapping or exact property match
+        const underscoreKey = h.replace(/\s+/g, "_");
+        const val = item[h] !== undefined ? item[h] : item[underscoreKey];
         return val !== undefined ? String(val) : "";
       });
       values.push(row);
@@ -339,6 +491,8 @@ async function writeToSheet(sheetName: string, items: any[]) {
   } catch (err) {
     console.error(`Error writing ${sheetName} to Google Sheets. Updating local fallback.`, err);
     if (sheetName === "Laporan") saveLocalLaporan(items);
+    else if (sheetName === "Dropdown_Pilihan") saveLocalDropdowns(items);
+    else if (sheetName === "Histori_Slip") saveLocalHistory(items);
     else saveLocalUsers(items);
   }
 }
@@ -676,6 +830,91 @@ app.post("/api/user-delete", async (req, res) => {
     res.json({ ok: true, msg: "Grup berhasil dihapus." });
   } catch (err) {
     res.json({ ok: false, msg: "Gagal menghapus grup dari Sheets." });
+  }
+});
+
+// --- GOOGLE SHEETS BACKED DROPDOWNS & HISTORI SLIP API ---
+
+// Get all Dropdown configurations from Google Sheets
+app.get("/api/dropdowns", async (req, res) => {
+  try {
+    const list = await fetchFromSheet("Dropdown_Pilihan");
+    res.json({ ok: true, data: list });
+  } catch (err) {
+    res.json({ ok: false, msg: "Gagal mengambil daftar dropdown pilihan." });
+  }
+});
+
+// Update/Save complete Dropdown list to Google Sheets
+app.post("/api/dropdowns/save", async (req, res) => {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items)) {
+    return res.json({ ok: false, msg: "Format data tidak valid." });
+  }
+
+  try {
+    const payload = items.map((opt) => ({
+      Kategori: opt.Kategori || opt.kategori || "",
+      Value: opt.Value || opt.value || "",
+      Label: opt.Label || opt.label || "",
+    }));
+    await writeToSheet("Dropdown_Pilihan", payload);
+    res.json({ ok: true, msg: "Dropdown pilihan berhasil disimpan." });
+  } catch (err) {
+    console.error("Error saving dropdowns:", err);
+    res.json({ ok: false, msg: "Gagal menyimpan dropdown pilihan ke Google Sheets." });
+  }
+});
+
+// Get all Histori Slip items from Google Sheets
+app.get("/api/history", async (req, res) => {
+  try {
+    const raw = await fetchFromSheet("Histori_Slip");
+    const normalized = raw.map((h) => ({
+      id: h.ID || h.id || "",
+      grup: h.Grup || h.grup || "",
+      tanggal: h.Tanggal || h.tanggal || "",
+      gaji: Number(h.Gaji || h.gaji || 0),
+      jumlahKerja: Number(h.Jumlah_Kerja || h.jumlah_kerja || h.jumlahKerja || 0),
+      adminPass: h.Admin_Pass || h.admin_pass || h.adminPass || "",
+    }));
+    res.json({ ok: true, data: normalized });
+  } catch (err) {
+    res.json({ ok: false, msg: "Gagal mengambil histori rekap gaji." });
+  }
+});
+
+// Save a new record to Slip History in Google Sheets
+app.post("/api/history/save", async (req, res) => {
+  const { item } = req.body;
+  if (!item) return res.json({ ok: false, msg: "Data slip tidak valid." });
+
+  try {
+    const current = await fetchFromSheet("Histori_Slip");
+    const nextItem = {
+      ID: item.id || `GG-${Date.now()}`,
+      Grup: item.grup || "",
+      Tanggal: item.tanggal || new Date().toISOString(),
+      Gaji: item.gaji || 0,
+      Jumlah_Kerja: item.jumlahKerja || 0,
+      Admin_Pass: item.adminPass || "",
+    };
+    const updated = [nextItem, ...current];
+    await writeToSheet("Histori_Slip", updated);
+    res.json({ ok: true, msg: "Histori rekap gaji berhasil didokumentasikan." });
+  } catch (err) {
+    console.error("Error saving history:", err);
+    res.json({ ok: false, msg: "Gagal menyimpan histori rekap gaji ke Google Sheets." });
+  }
+});
+
+// Clear Slip History in Google Sheets
+app.post("/api/history/clear", async (req, res) => {
+  try {
+    await writeToSheet("Histori_Slip", []);
+    res.json({ ok: true, msg: "Histori rekap gaji berhasil dibersihkan." });
+  } catch (err) {
+    res.json({ ok: false, msg: "Gagal membersihkan histori." });
   }
 });
 
