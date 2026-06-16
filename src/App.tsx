@@ -31,7 +31,7 @@ import {
 import { jsPDF } from "jspdf";
 import { ReportEntry, UserAccount, GoogleStatus } from "./types";
 // @ts-ignore
-import logoOwl from "./assets/images/logo_owl_1781561733481.jpg";
+import logoOwl from "./assets/images/logo_owl.png";
 
 const DEFAULT_DROPDOWNS = {
   lokasi: [
