@@ -27,8 +27,28 @@ const LAPORAN_FALLBACK_PATH = path.join(process.cwd(), "laporan-fallback.json");
 const USERS_FALLBACK_PATH = path.join(process.cwd(), "users-fallback.json");
 const DROPDOWN_FALLBACK_PATH = path.join(process.cwd(), "dropdown-fallback.json");
 const HISTORY_FALLBACK_PATH = path.join(process.cwd(), "history-fallback.json");
+const SKEMA_WAGE_FALLBACK_PATH = path.join(process.cwd(), "skema-wage-fallback.json");
 
 const DEFAULT_LAPORAN = [];
+
+const DEFAULT_SKEMA_WAGES = [
+  {
+    Jenis_Truk: "Colt Diesel",
+    Muatan: "Filter Aid",
+    Asal_Muatan: "PT Sorini",
+    Lokasi_Tujuan: "Tongas",
+    Hitungan_Upah: "Rit",
+    Upah: "300000"
+  },
+  {
+    Jenis_Truk: "Tronton",
+    Muatan: "Filter Aid",
+    Asal_Muatan: "PT Sorini",
+    Lokasi_Tujuan: "Kraton",
+    Hitungan_Upah: "KG",
+    Upah: "20"
+  }
+];
 
 const DEFAULT_DROPDOWNS_SERVER = [
   // lokasi
@@ -39,7 +59,7 @@ const DEFAULT_DROPDOWNS_SERVER = [
   { Kategori: "aktivitas", Value: "Proses Rebagging", Label: "Proses Rebagging" },
   { Kategori: "aktivitas", Value: "Perbaikan Mesin", Label: "Perbaikan Mesin" },
   { Kategori: "aktivitas", Value: "Pembangunan Fasilitas", Label: "Pembangunan Fasilitas" },
-  // pupukJenis
+  // pupukJenis (used both in Production and Transport cargo as requested)
   { Kategori: "pupukJenis", Value: "Granul", Label: "Organik Granul (Butiran)" },
   { Kategori: "pupukJenis", Value: "Remah", Label: "Organik Remah (Curah)" },
   { Kategori: "pupukJenis", Value: "Cair", Label: "Hayati Cair (Pupuk Cair)" },
@@ -53,10 +73,10 @@ const DEFAULT_DROPDOWNS_SERVER = [
   { Kategori: "trukJenis", Value: "Fuso", Label: "Fuso Ragasa" },
   { Kategori: "trukJenis", Value: "Tronton", Label: "Tronton Engkel" },
   { Kategori: "trukJenis", Value: "Gandeng", Label: "Gandeng Cargo" },
-  // trukMuatan
-  { Kategori: "trukMuatan", Value: "Granul", Label: "Granul Pack" },
-  { Kategori: "trukMuatan", Value: "Remah", Label: "Remah Curah" },
-  { Kategori: "trukMuatan", Value: "Bahan Baku", Label: "Kotoran / Baku" }
+  // supirMuatan (Driver Cargo dropdown)
+  { Kategori: "supirMuatan", Value: "Filter Aid", Label: "Filter Aid" },
+  // supirAsal (Driver Origin dropdown)
+  { Kategori: "supirAsal", Value: "PT Sorini", Label: "PT Sorini" }
 ];
 
 // Helper to load/save fallback database
@@ -104,6 +124,17 @@ function getLocalHistory(): any[] {
 
 function saveLocalHistory(data: any[]) {
   fs.writeFileSync(HISTORY_FALLBACK_PATH, JSON.stringify(data, null, 2));
+}
+
+function getLocalSkemaWages(): any[] {
+  if (!fs.existsSync(SKEMA_WAGE_FALLBACK_PATH)) {
+    fs.writeFileSync(SKEMA_WAGE_FALLBACK_PATH, JSON.stringify(DEFAULT_SKEMA_WAGES, null, 2));
+  }
+  return JSON.parse(fs.readFileSync(SKEMA_WAGE_FALLBACK_PATH, "utf-8"));
+}
+
+function saveLocalSkemaWages(data: any[]) {
+  fs.writeFileSync(SKEMA_WAGE_FALLBACK_PATH, JSON.stringify(data, null, 2));
 }
 
 // --- GOOGLE OAUTH UTILS ---
@@ -365,6 +396,8 @@ async function ensureWorksheetExists(spreadsheetId: string, token: string, sheet
         headerRow = ["Kategori", "Value", "Label"];
       } else if (sheetName === "Histori_Slip") {
         headerRow = ["ID", "Grup", "Tanggal", "Gaji", "Jumlah_Kerja", "Admin_Pass"];
+      } else if (sheetName === "Skema_Upah_Sopir") {
+        headerRow = ["Jenis_Truk", "Muatan", "Asal_Muatan", "Lokasi_Tujuan", "Hitungan_Upah", "Upah"];
       }
 
       if (headerRow.length > 0) {
@@ -379,6 +412,15 @@ async function ensureWorksheetExists(spreadsheetId: string, token: string, sheet
         if (sheetName === "Dropdown_Pilihan") {
           const rows = DEFAULT_DROPDOWNS_SERVER.map((d: any) => [d.Kategori, d.Value, d.Label]);
           await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:C${rows.length + 1}?valueInputOption=RAW`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({
+              values: rows,
+            }),
+          });
+        } else if (sheetName === "Skema_Upah_Sopir") {
+          const rows = DEFAULT_SKEMA_WAGES.map((s: any) => [s.Jenis_Truk, s.Muatan, s.Asal_Muatan, s.Lokasi_Tujuan, s.Hitungan_Upah, s.Upah]);
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2:F${rows.length + 1}?valueInputOption=RAW`, {
             method: "PUT",
             headers,
             body: JSON.stringify({
@@ -403,13 +445,14 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
     if (sheetName === "Laporan") return getLocalLaporan();
     if (sheetName === "Dropdown_Pilihan") return getLocalDropdowns();
     if (sheetName === "Histori_Slip") return getLocalHistory();
+    if (sheetName === "Skema_Upah_Sopir") return getLocalSkemaWages();
     return getLocalUsers();
   }
 
   try {
     const { spreadsheetId } = await getDriveResources(token);
 
-    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip") {
+    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip" || sheetName === "Skema_Upah_Sopir") {
       await ensureWorksheetExists(spreadsheetId, token, sheetName);
     }
 
@@ -428,6 +471,7 @@ async function fetchFromSheet(sheetName: string): Promise<any[]> {
     if (sheetName === "Laporan") return getLocalLaporan();
     if (sheetName === "Dropdown_Pilihan") return getLocalDropdowns();
     if (sheetName === "Histori_Slip") return getLocalHistory();
+    if (sheetName === "Skema_Upah_Sopir") return getLocalSkemaWages();
     return getLocalUsers();
   }
 }
@@ -439,6 +483,7 @@ async function writeToSheet(sheetName: string, items: any[]) {
     if (sheetName === "Laporan") saveLocalLaporan(items);
     else if (sheetName === "Dropdown_Pilihan") saveLocalDropdowns(items);
     else if (sheetName === "Histori_Slip") saveLocalHistory(items);
+    else if (sheetName === "Skema_Upah_Sopir") saveLocalSkemaWages(items);
     else saveLocalUsers(items);
     return;
   }
@@ -446,7 +491,7 @@ async function writeToSheet(sheetName: string, items: any[]) {
   try {
     const { spreadsheetId } = await getDriveResources(token);
 
-    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip") {
+    if (sheetName === "Dropdown_Pilihan" || sheetName === "Histori_Slip" || sheetName === "Skema_Upah_Sopir") {
       await ensureWorksheetExists(spreadsheetId, token, sheetName);
     }
 
@@ -464,6 +509,8 @@ async function writeToSheet(sheetName: string, items: any[]) {
       headers = ["Kategori", "Value", "Label"];
     } else if (sheetName === "Histori_Slip") {
       headers = ["ID", "Grup", "Tanggal", "Gaji", "Jumlah_Kerja", "Admin_Pass"];
+    } else if (sheetName === "Skema_Upah_Sopir") {
+      headers = ["Jenis_Truk", "Muatan", "Asal_Muatan", "Lokasi_Tujuan", "Hitungan_Upah", "Upah"];
     } else {
       headers = [];
     }
@@ -493,6 +540,7 @@ async function writeToSheet(sheetName: string, items: any[]) {
     if (sheetName === "Laporan") saveLocalLaporan(items);
     else if (sheetName === "Dropdown_Pilihan") saveLocalDropdowns(items);
     else if (sheetName === "Histori_Slip") saveLocalHistory(items);
+    else if (sheetName === "Skema_Upah_Sopir") saveLocalSkemaWages(items);
     else saveLocalUsers(items);
   }
 }
@@ -915,6 +963,50 @@ app.post("/api/history/clear", async (req, res) => {
     res.json({ ok: true, msg: "Histori rekap gaji berhasil dibersihkan." });
   } catch (err) {
     res.json({ ok: false, msg: "Gagal membersihkan histori." });
+  }
+});
+
+// --- DRIVER WAGE CALCULATIONS AND SCHEMA API ---
+
+// Get all driver wage combinations
+app.get("/api/driver-wages", async (req, res) => {
+  try {
+    const list = await fetchFromSheet("Skema_Upah_Sopir");
+    const normalized = list.map((w) => ({
+      jenisTruk: w.Jenis_Truk || w.jenisTruk || "",
+      muatan: w.Muatan || w.muatan || "",
+      asalMuatan: w.Asal_Muatan || w.asalMuatan || "",
+      lokasiTujuan: w.Lokasi_Tujuan || w.lokasiTujuan || "",
+      hitunganUpah: w.Hitungan_Upah || w.hitunganUpah || "Rit",
+      upah: Number(w.Upah || w.upah || 0),
+    }));
+    res.json({ ok: true, data: normalized });
+  } catch (err) {
+    res.json({ ok: false, msg: "Gagal mengambil skema upah sopir." });
+  }
+});
+
+// Update driver wage combinations
+app.post("/api/driver-wages/save", async (req, res) => {
+  const { items } = req.body;
+  if (!items || !Array.isArray(items)) {
+    return res.json({ ok: false, msg: "Format data skema upah tidak valid." });
+  }
+
+  try {
+    const payload = items.map((w) => ({
+      Jenis_Truk: w.jenisTruk || w.Jenis_Truk || "",
+      Muatan: w.muatan || w.Muatan || "",
+      Asal_Muatan: w.asalMuatan || w.Asal_Muatan || "",
+      Lokasi_Tujuan: w.lokasiTujuan || w.Lokasi_Tujuan || "",
+      Hitungan_Upah: w.hitunganUpah || w.Hitungan_Upah || "Rit",
+      Upah: Number(w.upah || w.Upah || 0),
+    }));
+    await writeToSheet("Skema_Upah_Sopir", payload);
+    res.json({ ok: true, msg: "Skema upah sopir berhasil disimpan." });
+  } catch (err) {
+    console.error("Error saving driver wages:", err);
+    res.json({ ok: false, msg: "Gagal menyimpan skema upah sopir ke Google Sheets." });
   }
 });
 

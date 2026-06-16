@@ -25,7 +25,8 @@ import {
   Network, 
   UserPlus, 
   FileCheck,
-  Check
+  Check,
+  Send
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { ReportEntry, UserAccount, GoogleStatus } from "./types";
@@ -60,10 +61,11 @@ const DEFAULT_DROPDOWNS = {
     { value: "Tronton", label: "Tronton Engkel" },
     { value: "Gandeng", label: "Gandeng Cargo" }
   ],
-  trukMuatan: [
-    { value: "Granul", label: "Granul Pack" },
-    { value: "Remah", label: "Remah Curah" },
-    { value: "Bahan Baku", label: "Kotoran / Baku" }
+  supirMuatan: [
+    { value: "Filter Aid", label: "Filter Aid" }
+  ],
+  supirAsal: [
+    { value: "PT Sorini", label: "PT Sorini" }
   ]
 };
 
@@ -84,7 +86,7 @@ export default function App() {
 
   // --- APP NAVIGATION ---
   const [activeTab, setActiveTab] = useState<"form" | "rekap" | "user">("form");
-  const [adminSubTab, setAdminSubTab] = useState<"users" | "dropdowns" | "history">("users");
+  const [adminSubTab, setAdminSubTab] = useState<"users" | "dropdowns" | "history" | "driverwages">("users");
 
   // --- DROPDOWN MANAGE STATES ---
   const [dropdowns, setDropdowns] = useState<typeof DEFAULT_DROPDOWNS>(DEFAULT_DROPDOWNS);
@@ -98,6 +100,29 @@ export default function App() {
 
   // --- SLIP PRINT HISTORY ---
   const [slipHistory, setSlipHistory] = useState<any[]>([]);
+
+  // --- DRIVER SCHEME CONFIGS ---
+  const [driverWages, setDriverWages] = useState<any[]>([]);
+
+  // --- ONWER DRIVER WAGE CRUD STATES ---
+  const [owJenisTruk, setOwJenisTruk] = useState("");
+  const [owMuatan, setOwMuatan] = useState("");
+  const [owAsalMuatan, setOwAsalMuatan] = useState("");
+  const [owLokasiTujuan, setOwLokasiTujuan] = useState("");
+  const [owHitunganUpah, setOwHitunganUpah] = useState("Rit");
+  const [owUpah, setOwUpah] = useState("");
+
+  // --- DRIVER REPORTING STATES ---
+  const [sTanggal, setSTanggal] = useState(() => new Date().toISOString().split("T")[0]);
+  const [sLokasiSelect, setSLokasiSelect] = useState("");
+  const [sLokasiLainnya, setSLokasiLainnya] = useState("");
+  const [sNama, setSNama] = useState("");
+  const [sJenisTruk, setSJenisTruk] = useState("");
+  const [sMuatan, setSMuatan] = useState("");
+  const [sAsalMuatan, setSAsalMuatan] = useState("");
+  const [sBeratKG, setSBeratKG] = useState("");
+  const [sSjFiles, setSSjFiles] = useState<{ name: string; base64: string; type: string }[]>([]);
+  const [sFotoTrukFiles, setSFotoTrukFiles] = useState<{ name: string; base64: string; type: string }[]>([]);
 
   // --- DATA LISTS ---
   const [reports, setReports] = useState<ReportEntry[]>([]);
@@ -160,6 +185,7 @@ export default function App() {
   // --- LIFECYCLES ---
   useEffect(() => {
     loadDropdowns();
+    loadDriverWages();
   }, []);
 
   useEffect(() => {
@@ -172,6 +198,9 @@ export default function App() {
       if (session.role === "owner") {
         loadUsers();
         loadHistory();
+        loadDriverWages();
+      } else {
+        loadDriverWages();
       }
     }
   }, [session, activeTab]);
@@ -225,7 +254,8 @@ export default function App() {
             pupukJenis: list.filter((i: any) => (i.Kategori || i.kategori) === "pupukJenis").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
             pupukMerek: list.filter((i: any) => (i.Kategori || i.kategori) === "pupukMerek").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
             trukJenis: list.filter((i: any) => (i.Kategori || i.kategori) === "trukJenis").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
-            trukMuatan: list.filter((i: any) => (i.Kategori || i.kategori) === "trukMuatan").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            supirMuatan: list.filter((i: any) => (i.Kategori || i.kategori) === "supirMuatan").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
+            supirAsal: list.filter((i: any) => (i.Kategori || i.kategori) === "supirAsal").map((i: any) => ({ value: i.Value || i.value, label: i.Label || i.label })),
           };
           setDropdowns(newDropdowns);
         } else {
@@ -235,6 +265,18 @@ export default function App() {
       }
     } catch (err) {
       console.error("Gagal memuat dropdown dari Google Sheets:", err);
+    }
+  };
+
+  const loadDriverWages = async () => {
+    try {
+      const res = await fetch("/api/driver-wages");
+      if (res.ok) {
+        const body = await res.json();
+        setDriverWages(body.data || []);
+      }
+    } catch (err) {
+      console.error("Gagal memuat skema upah sopir:", err);
     }
   };
 
@@ -582,6 +624,181 @@ export default function App() {
     }
   };
 
+  const calculateDriverWage = (jenisTrukVal: string, muatanVal: string, asalMuatanVal: string, lokasiTujuanVal: string, beratKGVal: number) => {
+    const match = driverWages.find(w => 
+      String(w.jenisTruk || "").toLowerCase().trim() === String(jenisTrukVal).toLowerCase().trim() &&
+      String(w.muatan || "").toLowerCase().trim() === String(muatanVal).toLowerCase().trim() &&
+      String(w.asalMuatan || "").toLowerCase().trim() === String(asalMuatanVal).toLowerCase().trim() &&
+      String(w.lokasiTujuan || "").toLowerCase().trim() === String(lokasiTujuanVal).toLowerCase().trim()
+    );
+
+    if (match) {
+      const rate = Number(match.upah || 0);
+      if (String(match.hitunganUpah).toLowerCase() === "kg") {
+        return rate * beratKGVal;
+      } else {
+        // Default "Rit"
+        return rate;
+      }
+    }
+    return 0; // default 0 if no matching scheme is set
+  };
+
+  const handleSaveDriverReport = async () => {
+    const activeLokasi = sLokasiSelect === "Lainnya" ? sLokasiLainnya : sLokasiSelect;
+    if (!activeLokasi) {
+      triggerToast("⚠ Kolom lokasi tujuan wajib diisi.", "error");
+      return;
+    }
+    if (!sNama.trim()) {
+      triggerToast("⚠ Kolom nama sopir wajib diisi.", "error");
+      return;
+    }
+    if (!sJenisTruk) {
+      triggerToast("⚠ Kolom jenis truk wajib diisi.", "error");
+      return;
+    }
+    if (!sMuatan) {
+      triggerToast("⚠ Kolom muatan wajib diisi.", "error");
+      return;
+    }
+    if (!sAsalMuatan) {
+      triggerToast("⚠ Kolom asal muatan wajib diisi.", "error");
+      return;
+    }
+    const beratKG = parseFloat(sBeratKG);
+    if (isNaN(beratKG) || beratKG <= 0) {
+      triggerToast("⚠ Kolom berat muatan dalam KG tidak valid.", "error");
+      return;
+    }
+
+    const computedGaji = calculateDriverWage(sJenisTruk, sMuatan, sAsalMuatan, activeLokasi, beratKG);
+
+    const payloadEntry = {
+      tanggal: sTanggal,
+      lokasi: activeLokasi,
+      grup: session?.grup || "Sopir",
+      jenis: "angkut",
+      pekerjaan: "Pengangkutan Bahan Baku oleh Sopir",
+      sopir: sNama.trim(),
+      nopol: "", // can let server or reports table know it's a driver
+      jenisTruk: sJenisTruk,
+      jenisMuatan: sMuatan,
+      merekMuatan: sAsalMuatan,
+      kgAngkut: beratKG,
+      gaji: computedGaji,
+    };
+
+    const photosPayload: any = {};
+    if (sSjFiles && sSjFiles.length > 0) {
+      photosPayload.sj = sSjFiles;
+    }
+    if (sFotoTrukFiles && sFotoTrukFiles.length > 0) {
+      photosPayload.truk = sFotoTrukFiles;
+    }
+
+    setIsSavingReport(true);
+    setUploadStatusMsg(photosPayload.sj?.length || photosPayload.truk?.length ? "⏳ Mengupload foto ke Google Drive..." : "Saving...");
+
+    try {
+      const res = await fetch("/api/reports/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entry: payloadEntry,
+          photos: photosPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Penyimpanan gagal diidentifikasi.");
+      }
+
+      const body = await res.json();
+      if (body.ok) {
+        triggerToast("✓ Laporan pengangkutan supir tersimpan sukses!");
+        resetForm();
+        loadReports();
+      } else {
+        triggerToast("Gagal menyimpan: " + body.msg, "error");
+      }
+    } catch (err) {
+      triggerToast("Gagal berkomunikasi dengan server harian.", "error");
+    } finally {
+      setIsSavingReport(false);
+      setUploadStatusMsg("");
+    }
+  };
+
+  const handleAddDriverWage = async () => {
+    if (!owJenisTruk || !owMuatan || !owAsalMuatan || !owLokasiTujuan || !owUpah) {
+      triggerToast("⚠ Semua kolom wajib diisi untuk skema upah.", "error");
+      return;
+    }
+    const rate = parseFloat(owUpah);
+    if (isNaN(rate) || rate < 0) {
+      triggerToast("⚠ Jumlah upah tidak valid.", "error");
+      return;
+    }
+
+    // Check if duplicate entry already exists
+    const duplicate = driverWages.some(w => 
+      String(w.jenisTruk || "").toLowerCase().trim() === String(owJenisTruk).toLowerCase().trim() &&
+      String(w.muatan || "").toLowerCase().trim() === String(owMuatan).toLowerCase().trim() &&
+      String(w.asalMuatan || "").toLowerCase().trim() === String(owAsalMuatan).toLowerCase().trim() &&
+      String(w.lokasiTujuan || "").toLowerCase().trim() === String(owLokasiTujuan).toLowerCase().trim()
+    );
+    if (duplicate) {
+      triggerToast("⚠ Skema kombinasi ini sudah terdaftar.", "error");
+      return;
+    }
+
+    const newItem = {
+      jenisTruk: owJenisTruk,
+      muatan: owMuatan,
+      asalMuatan: owAsalMuatan,
+      lokasiTujuan: owLokasiTujuan,
+      hitunganUpah: owHitunganUpah,
+      upah: rate
+    };
+
+    const nextWages = [...driverWages, newItem];
+    await saveDriverWages(nextWages);
+  };
+
+  const handleDeleteDriverWage = async (idx: number) => {
+    const isConfirm = window.confirm("Apakah Anda yakin ingin menghapus skema upah kombinasi ini?");
+    if (!isConfirm) return;
+    const nextWages = driverWages.filter((_, i) => i !== idx);
+    await saveDriverWages(nextWages);
+  };
+
+  const saveDriverWages = async (nextWages: any[]) => {
+    try {
+      const res = await fetch("/api/driver-wages/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: nextWages }),
+      });
+      if (res.ok) {
+        setDriverWages(nextWages);
+        triggerToast("✓ Berhasil memperbarui skema upah supir!");
+        // Reset fields
+        setOwJenisTruk("");
+        setOwMuatan("");
+        setOwAsalMuatan("");
+        setOwLokasiTujuan("");
+        setOwHitunganUpah("Rit");
+        setOwUpah("");
+      } else {
+        triggerToast("Gagal menyimpan skema ke Google Sheets.", "error");
+      }
+    } catch (err) {
+      console.error("Gagal menyinkronkan upah sopir:", err);
+      triggerToast("Koneksi gagal saat menyimpan.", "error");
+    }
+  };
+
   const resetForm = () => {
     setFTanggal(new Date().toISOString().split("T")[0]);
     setFLokasi("");
@@ -602,6 +819,18 @@ export default function App() {
     setAKg("");
     setASjFiles([]);
     setAFotoTrukFiles([]);
+
+    // Driver reset
+    setSTanggal(new Date().toISOString().split("T")[0]);
+    setSLokasiSelect("");
+    setSLokasiLainnya("");
+    setSNama("");
+    setSJenisTruk("");
+    setSMuatan("");
+    setSAsalMuatan("");
+    setSBeratKG("");
+    setSSjFiles([]);
+    setSFotoTrukFiles([]);
   };
 
   // Delete operational report item (Owner only)
@@ -1166,10 +1395,10 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="text-xs bg-white/20 font-bold px-3 py-1 rounded-full border border-white/10 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              {session.role === "owner" ? "⭐ OWNER" : ` Mandor: ${session.nama}`}
+              {session.role === "owner" ? "⭐ OWNER" : session.role === "sopir" ? `Sopir: ${session.nama}` : `Mandor: ${session.nama}`}
             </span>
             <span className="text-xs text-white/70 font-medium hidden md:inline">
-              ({session.grup})
+              ({session.grup || "CV Gulma"})
             </span>
           </div>
           <button 
@@ -1268,24 +1497,28 @@ export default function App() {
 
       {/* SEGMENT TAB NAVIGATION BAR */}
       <div className="bg-[#FFFFFF] border-b border-[#E3E5E2] flex px-4 md:px-8 overflow-x-auto whitespace-nowrap scrollbar-none">
-        <button 
-          onClick={() => setActiveTab("form")}
-          className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "form" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
-        >
-          <PlusCircle className="w-4 h-4" />
-          Input Laporan Kerja
-        </button>
-        <button 
-          onClick={() => setActiveTab("rekap")}
-          className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "rekap" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
-        >
-          <Coins className="w-4 h-4" />
-          Rekap Kerja & Cetak Slip Gaji {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length > 0 && (
-            <span className="bg-red-500 text-white rounded-full px-2 py-0.5 text-[9px] font-bold">
-              {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length}
-            </span>
-          )}
-        </button>
+        {session.role !== "owner" && (
+          <button 
+            onClick={() => setActiveTab("form")}
+            className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "form" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
+          >
+            <PlusCircle className="w-4 h-4" />
+            Input Laporan Kerja
+          </button>
+        )}
+        {session.role !== "sopir" && (
+          <button 
+            onClick={() => setActiveTab("rekap")}
+            className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "rekap" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
+          >
+            <Coins className="w-4 h-4" />
+            {session.role === "owner" ? "Rekap Kerja & Slip Gaji" : "Rekap Kerja & Cetak Slip Gaji"} {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length > 0 && (
+              <span className="bg-red-500 text-white rounded-full px-2 py-0.5 text-[9px] font-bold">
+                {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length}
+              </span>
+            )}
+          </button>
+        )}
         
         {session.role === "owner" && (
           <button 
@@ -1293,7 +1526,7 @@ export default function App() {
             className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "user" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
           >
             <Users className="w-4 h-4" />
-            Atur Grup & Mandor
+            Master Data
           </button>
         )}
       </div>
@@ -1303,8 +1536,199 @@ export default function App() {
         
         {/* TAB 1: INPUT LAPORAN */}
         {activeTab === "form" && (
-          <div className="max-w-xl mx-auto space-y-6">
-            <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-6">
+          session.role === "sopir" ? (
+            <div className="max-w-xl mx-auto space-y-6 pb-12 animate-fade-in">
+              <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-6 space-y-6">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A7F5A] border-b border-[#E3E5E2] pb-2 mb-4 flex items-center justify-between">
+                    <span>Informasi Umum</span>
+                    <span className="font-sans font-bold normal-case text-[#6B7068] text-[11px] bg-[#E6F4EE] px-2.5 py-0.5 rounded-full">
+                      Sopir: {session.nama}
+                    </span>
+                  </h3>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Tanggal Pengangkutan</label>
+                      <input 
+                        type="date"
+                        value={sTanggal}
+                        onChange={(e) => setSTanggal(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm text-[#1A1C18] focus:border-[#1A7F5A] focus:bg-white outline-none transition"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Lokasi Tujuan</label>
+                      <select
+                        value={sLokasiSelect}
+                        onChange={(e) => setSLokasiSelect(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-3 py-2 text-sm text-[#1A1C18] focus:border-[#1A7F5A] focus:bg-white outline-none transition"
+                      >
+                        <option value="">— Pilih Lokasi Tujuan —</option>
+                        {dropdowns.lokasi.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                        <option value="Lainnya">Lainnya...</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {sLokasiSelect === "Lainnya" && (
+                    <div className="mt-3 animate-fade-in">
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Ketik Lokasi Tujuan Lainnya</label>
+                      <input 
+                        type="text"
+                        value={sLokasiLainnya}
+                        onChange={(e) => setSLokasiLainnya(e.target.value)}
+                        placeholder="Masukkan lokasi tujuan baru..."
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-4 py-2 text-sm focus:border-[#1A7F5A] focus:bg-white outline-none transition"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* FORM PENGISIAN DETAIL */}
+                <div className="border-t border-[#E3E5E2] pt-4 space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A7F5A] pb-1">Detail Muatan & Truk</h3>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-[#6B7068] mb-1">Nama Sopir</label>
+                    <input 
+                      type="text"
+                      value={sNama}
+                      onChange={(e) => setSNama(e.target.value)}
+                      placeholder="Masukkan nama lengkap sopir..."
+                      className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-4 py-2 text-sm focus:border-[#1A7F5A] focus:bg-white outline-none transition"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Jenis Truk</label>
+                      <select
+                        value={sJenisTruk}
+                        onChange={(e) => setSJenisTruk(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
+                      >
+                        <option value="">— Jenis Truk —</option>
+                        {dropdowns.trukJenis.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Muatan</label>
+                      <select
+                        value={sMuatan}
+                        onChange={(e) => setSMuatan(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
+                      >
+                        <option value="">— Muatan —</option>
+                        {dropdowns.supirMuatan.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-[#6B7068] mb-1">Asal Muatan</label>
+                      <select
+                        value={sAsalMuatan}
+                        onChange={(e) => setSAsalMuatan(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
+                      >
+                        <option value="">— Asal Muatan —</option>
+                        {dropdowns.supirAsal.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#6B7068] mb-1">Berat Muatan (KG)</label>
+                    <input 
+                      type="number"
+                      value={sBeratKG}
+                      onChange={(e) => setSBeratKG(e.target.value)}
+                      placeholder="Contoh: 15400"
+                      className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-4 py-2 text-sm focus:border-[#1A7F5A] focus:bg-white outline-none transition"
+                    />
+                  </div>
+
+                  {/* FOTO SURAT JALAN */}
+                  <div className="border border-[#E3E5E2] p-4 rounded-xl bg-[#FBFBFA]">
+                    <span className="block text-xs font-semibold text-[#1A1C18]">Foto Surat Jalan / Timbangan</span>
+                    <span className="block text-[10px] text-[#6B7068] mb-2">Unggah bukti kertas penimbangan / surat jalan</span>
+                    <input 
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => onFileChange(e, setSSjFiles)}
+                      className="text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#1A7F5A]/10 file:text-[#1A7F5A] hover:file:bg-[#1A7F5A]/20 cursor-pointer"
+                    />
+                    {sSjFiles.length > 0 && (
+                      <div className="flex flex-wrap gap-2.5 mt-3">
+                        {sSjFiles.map((file, i) => (
+                          <div key={i} className="relative w-16 h-16 border border-[#E3E5E2] rounded-lg overflow-hidden">
+                            <img src={`data:${file.type};base64,${file.base64}`} className="w-full h-full object-cover" alt="Preview Surat Jalan" />
+                            <span className="absolute bottom-0 right-0 bg-[#1A7F5A] text-white font-bold text-[9px] px-1 rounded-tl">
+                              {i+1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* FOTO TRUK */}
+                  <div className="border border-[#E3E5E2] p-4 rounded-xl bg-[#FBFBFA]">
+                    <span className="block text-xs font-semibold text-[#1A1C18]">Foto Truk</span>
+                    <span className="block text-[10px] text-[#6B7068] mb-2">Unggah foto penampakan truk pengangkutan</span>
+                    <input 
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={(e) => onFileChange(e, setSFotoTrukFiles)}
+                      className="text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#1A7F5A]/10 file:text-[#1A7F5A] hover:file:bg-[#1A7F5A]/20 cursor-pointer"
+                    />
+                    {sFotoTrukFiles.length > 0 && (
+                      <div className="flex flex-wrap gap-2.5 mt-3">
+                        {sFotoTrukFiles.map((file, i) => (
+                          <div key={i} className="relative w-16 h-16 border border-[#E3E5E2] rounded-lg overflow-hidden">
+                            <img src={`data:${file.type};base64,${file.base64}`} className="w-full h-full object-cover" alt="Preview Truk" />
+                            <span className="absolute bottom-0 right-0 bg-[#1A7F5A] text-white font-bold text-[9px] px-1 rounded-tl">
+                              {i+1}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* STATUS BAR OR SAVE ACTIONS */}
+                {isSavingReport && (
+                  <div className="p-3 bg-[#E6F4EE] border border-[#1A7F5A]/20 rounded-xl flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-[#1A7F5A] animate-spin" />
+                    <span className="text-xs text-[#1A7F5A] font-medium">{uploadStatusMsg}</span>
+                  </div>
+                )}
+
+                <button 
+                  onClick={handleSaveDriverReport}
+                  disabled={isSavingReport}
+                  className="w-full bg-[#1A7F5A] hover:bg-[#0F5C40] active:scale-[0.99] disabled:bg-[#BAC0B7] text-white py-3.5 rounded-xl font-bold text-sm tracking-wide shadow-sm transition duration-150 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Send className="w-4 h-4" />
+                  Kirim Laporan Pengangkutan Sopir
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="max-w-xl mx-auto space-y-6">
+              <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-6">
               <h3 className="text-xs font-bold uppercase tracking-wider text-[#1A7F5A] border-b border-[#E3E5E2] pb-2 mb-4 flex items-center justify-between">
                 <span>Informasi Umum</span>
                 <span className="font-sans font-bold normal-case text-[#6B7068] text-[11px] bg-[#E6F4EE] px-2.5 py-0.5 rounded-full">
@@ -1550,7 +1974,7 @@ export default function App() {
                         className="w-full bg-[#F5F6F4] border-2 border-[#E3E5E2] rounded-xl px-2 py-2 text-xs focus:border-[#1A7F5A] outline-none"
                       >
                         <option value="">— Muatan —</option>
-                        {dropdowns.trukMuatan.map((opt: any, idx: number) => (
+                        {dropdowns.pupukJenis.map((opt: any, idx: number) => (
                           <option key={idx} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
@@ -1664,6 +2088,7 @@ export default function App() {
               )}
             </button>
           </div>
+          )
         )}
 
         {/* TAB 2: REKAP OPERASIONAL & SLIP GAJI */}
@@ -1961,6 +2386,15 @@ export default function App() {
                 Kelola Dropdown Pilihan
               </button>
               <button 
+                onClick={() => setAdminSubTab("driverwages")}
+                className={`pb-3.5 px-3 font-semibold text-xs transition relative cursor-pointer ${adminSubTab === "driverwages" ? "text-[#1A7F5A] font-bold" : "text-gray-500 hover:text-gray-900"}`}
+              >
+                {adminSubTab === "driverwages" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1A7F5A] rounded-full" />
+                )}
+                Skema Upah Sopir
+              </button>
+              <button 
                 onClick={() => setAdminSubTab("history")}
                 className={`pb-3.5 px-3 font-semibold text-xs transition relative cursor-pointer ${adminSubTab === "history" ? "text-[#1A7F5A] font-bold" : "text-gray-500 hover:text-gray-900"}`}
               >
@@ -2175,6 +2609,158 @@ export default function App() {
                       Simpan Pilihan Baru ke Kategori ini
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB 2.5: SKEMA UPAH SOPIR */}
+            {adminSubTab === "driverwages" && (
+              <div className="space-y-6 animate-fade-in">
+                <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-5">
+                  <h3 className="font-serif font-bold text-lg text-gray-950">Atur Skema Upah Sopir</h3>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Tentukan upah standar transport berdasarkan kombinasi jenis kendaraan, muatan, asal muatan, dan lokasi tujuan.</p>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Jenis Truk</label>
+                      <select 
+                        value={owJenisTruk}
+                        onChange={(e) => setOwJenisTruk(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      >
+                        <option value="">— Pilih Jenis Truk —</option>
+                        {dropdowns.trukJenis.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Muatan (Pupuk Jenis)</label>
+                      <select 
+                        value={owMuatan}
+                        onChange={(e) => setOwMuatan(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      >
+                        <option value="">— Pilih Muatan —</option>
+                        {dropdowns.supirMuatan.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Asal Muatan</label>
+                      <select 
+                        value={owAsalMuatan}
+                        onChange={(e) => setOwAsalMuatan(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      >
+                        <option value="">— Pilih Asal Muatan —</option>
+                        {dropdowns.supirAsal.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Lokasi Tujuan</label>
+                      <select 
+                        value={owLokasiTujuan}
+                        onChange={(e) => setOwLokasiTujuan(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      >
+                        <option value="">— Pilih Lokasi Tujuan —</option>
+                        {dropdowns.lokasi.map((opt: any, idx: number) => (
+                          <option key={idx} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Hitungan Upah</label>
+                      <select 
+                        value={owHitunganUpah}
+                        onChange={(e) => setOwHitunganUpah(e.target.value)}
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      >
+                        <option value="Rit">Rit (Upah Tetap per 1x Jalan)</option>
+                        <option value="KG">KG (Upah dikalikan Berat Muatan Supir)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-650 mb-1">Besaran Upah per Unit (Rp)</label>
+                      <input 
+                        type="number"
+                        value={owUpah}
+                        onChange={(e) => setOwUpah(e.target.value)}
+                        placeholder="Contoh: 150000"
+                        className="w-full bg-[#F5F6F4] border border-[#E3E5E2] rounded-xl px-3 py-2 text-xs focus:border-[#1A7F5A]"
+                      />
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleAddDriverWage}
+                    className="w-full bg-[#1A7F5A] hover:bg-[#0F5C40] text-white font-bold text-xs py-2.5 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 mt-4 shadow-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Simpan Kombinasi Upah Baru
+                  </button>
+                </div>
+
+                {/* TABLE OF CURRENT CONFIGURATIONS */}
+                <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-5">
+                  <h3 className="font-serif font-bold text-sm text-gray-950 mb-3">Daftar Kombinasi Skema Upah Sopir Aktic ({driverWages.length})</h3>
+                  
+                  {driverWages.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400 text-xs">
+                      Belum ada skema upah kombinasi terdaftar. Tentukan kombinasi di atas untuk memulai.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs text-gray-700">
+                        <thead>
+                          <tr className="bg-gray-50 border-b border-gray-150 text-[10px] text-gray-400 font-bold uppercase tracking-wider">
+                            <th className="py-2.5 px-3">Jenis Truk</th>
+                            <th className="py-2.5 px-3">Muatan</th>
+                            <th className="py-2.5 px-3">Asal</th>
+                            <th className="py-2.5 px-3">Tujuan</th>
+                            <th className="py-2.5 px-3 text-center">Hitungan</th>
+                            <th className="py-2.5 px-3 text-right">Upah (Rp)</th>
+                            <th className="py-2.5 px-3 text-center">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {driverWages.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50 transition">
+                              <td className="py-2.5 px-3 font-semibold text-gray-800">{item.jenisTruk}</td>
+                              <td className="py-2.5 px-3">{item.muatan}</td>
+                              <td className="py-2.5 px-3 text-gray-550">{item.asalMuatan}</td>
+                              <td className="py-2.5 px-3 text-gray-550">{item.lokasiTujuan}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold ${item.hitunganUpah === "KG" ? "bg-purple-100 text-purple-800" : "bg-emerald-100 text-emerald-800"}`}>
+                                  {item.hitunganUpah}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-extrabold text-slate-800">
+                                Rp {Number(item.upah || 0).toLocaleString("id-ID")}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  onClick={() => handleDeleteDriverWage(idx)}
+                                  className="text-red-650 hover:bg-red-50 p-1.5 rounded-lg border border-transparent hover:border-red-100 cursor-pointer transition"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
