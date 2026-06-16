@@ -85,7 +85,18 @@ export default function App() {
   const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 
   // --- APP NAVIGATION ---
-  const [activeTab, setActiveTab] = useState<"form" | "rekap" | "user">("form");
+  const [activeTab, setActiveTab] = useState<"form" | "rekap" | "user text" | any>(() => {
+    const saved = localStorage.getItem("gg_session");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.role === "owner") return "rekap";
+      } catch (e) {
+        // Fallback
+      }
+    }
+    return "form";
+  });
   const [adminSubTab, setAdminSubTab] = useState<"users" | "dropdowns" | "history" | "driverwages">("users");
 
   // --- DROPDOWN MANAGE STATES ---
@@ -173,6 +184,7 @@ export default function App() {
   const [mUsername, setMUsername] = useState("");
   const [mNama, setMNama] = useState("");
   const [mPassword, setMPassword] = useState("");
+  const [mRole, setMRole] = useState<"owner" | "mandor" | "sopir">("mandor");
 
   // --- TOAST NOTIFICATIONS ---
   const [toastMsg, setToastMsg] = useState("");
@@ -420,6 +432,7 @@ export default function App() {
           grup: body.grup,
         };
         setSession(userSession);
+        setActiveTab(body.role === "owner" ? "rekap" : "form");
         localStorage.setItem("gg_session", JSON.stringify(userSession));
         triggerToast(`Selamat datang, ${body.nama}!`);
       } else {
@@ -438,6 +451,7 @@ export default function App() {
       localStorage.removeItem("gg_session");
       setLoginUser("");
       setLoginPass("");
+      setActiveTab("form");
       triggerToast("Sukses keluar.");
     }
   };
@@ -642,6 +656,28 @@ export default function App() {
       }
     }
     return 0; // default 0 if no matching scheme is set
+  };
+
+  const getDriverWageStatus = () => {
+    const activeLokasi = sLokasiSelect === "Lainnya" ? sLokasiLainnya : sLokasiSelect;
+    if (!sJenisTruk || !sMuatan || !sAsalMuatan || !activeLokasi) {
+      return { status: "incomplete" };
+    }
+    const match = driverWages.find(w => 
+      String(w.jenisTruk || "").toLowerCase().trim() === String(sJenisTruk).toLowerCase().trim() &&
+      String(w.muatan || "").toLowerCase().trim() === String(sMuatan).toLowerCase().trim() &&
+      String(w.asalMuatan || "").toLowerCase().trim() === String(sAsalMuatan).toLowerCase().trim() &&
+      String(w.lokasiTujuan || "").toLowerCase().trim() === String(activeLokasi).toLowerCase().trim()
+    );
+
+    if (match) {
+      const rate = Number(match.upah || 0);
+      const isKg = String(match.hitunganUpah).toLowerCase() === "kg";
+      const berat = parseFloat(sBeratKG) || 0;
+      const total = isKg ? rate * berat : rate;
+      return { status: "found", rate, isKg, total };
+    }
+    return { status: "not_found" };
   };
 
   const handleSaveDriverReport = async () => {
@@ -864,10 +900,12 @@ export default function App() {
       setMUsername(selectedUser.username);
       setMNama(selectedUser.nama);
       setMPassword(selectedUser.password || "");
+      setMRole((selectedUser.role as any) || "mandor");
     } else {
       setMUsername("");
       setMNama("");
       setMPassword("");
+      setMRole("mandor");
     }
     setMOpen(true);
   };
@@ -878,6 +916,8 @@ export default function App() {
       return;
     }
 
+    const calculatedGrup = `${mRole} ${mNama.trim()}`;
+
     try {
       const res = await fetch("/api/user-save", {
         method: "POST",
@@ -887,7 +927,8 @@ export default function App() {
             username: mUsername.trim().toLowerCase(),
             nama: mNama.trim(),
             password: mPassword.trim(),
-            grup: mNama.trim(), // sync group name with display name
+            role: mRole,
+            grup: calculatedGrup,
           },
         }),
       });
@@ -895,7 +936,7 @@ export default function App() {
       if (res.ok) {
         const body = await res.json();
         if (body.ok) {
-          triggerToast(body.msg);
+          triggerToast("✓ Berhasil menyimpan data pengguna!");
           setMOpen(false);
           loadUsers();
         } else {
@@ -908,7 +949,7 @@ export default function App() {
   };
 
   const handleDeleteUser = async (username: string) => {
-    if (!window.confirm(`Yakin ingin menghapus mandor akun @${username}?`)) return;
+    if (!window.confirm(`Yakin ingin menghapus akun @${username}?`)) return;
 
     try {
       const res = await fetch("/api/user-delete", {
@@ -981,9 +1022,9 @@ export default function App() {
 
   // --- FILTERS LOGIC ---
   const filteredReports = reports.filter((item) => {
-    // Group restriction for mandor - they can only see their own group records
-    if (session?.role === "mandor") {
-      if (item.Grup !== session.grup) return false;
+    // Group restriction for mandor & sopir - they can only see their own group records
+    if (session?.role === "mandor" || session?.role === "sopir") {
+      if (item.Grup !== session.grup && String(item.Sopir || "").toLowerCase().trim() !== String(session.nama || "").toLowerCase().trim()) return false;
     } else {
       // Owner can filter by group
       if (filterGrup && item.Grup !== filterGrup) return false;
@@ -1014,7 +1055,7 @@ export default function App() {
   // and marks the status as Lunas (Paid) so no double payment can occur in the business.
   const handleCetakSlipGajiDanLunasi = async () => {
     // Determine target group
-    const targetGroup = session?.role === "mandor" ? session.grup : filterGrup;
+    const targetGroup = (session?.role === "mandor" || session?.role === "sopir") ? session.grup : filterGrup;
     if (!targetGroup) {
       triggerToast("⚠ Harap pilih satu Grup / Mandor di filter sebelum mencetak slip gaji.", "error");
       return;
@@ -1054,7 +1095,7 @@ export default function App() {
   };
 
   const generatePdfWithLogo = async (imgElement: HTMLImageElement | null) => {
-    const targetGroup = session?.role === "mandor" ? session.grup : filterGrup;
+    const targetGroup = (session?.role === "mandor" || session?.role === "sopir") ? session.grup : filterGrup;
     const unpaidItems = filteredReports.filter(
       (item) => item.Grup === targetGroup && item.Status_Pembayaran !== "Lunas"
     );
@@ -1503,22 +1544,20 @@ export default function App() {
             className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "form" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
           >
             <PlusCircle className="w-4 h-4" />
-            Input Laporan Kerja
+            {session.role === "sopir" ? "Input Laporan Muat" : "Input Laporan Kerja"}
           </button>
         )}
-        {session.role !== "sopir" && (
-          <button 
-            onClick={() => setActiveTab("rekap")}
-            className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "rekap" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
-          >
-            <Coins className="w-4 h-4" />
-            {session.role === "owner" ? "Rekap Kerja & Slip Gaji" : "Rekap Kerja & Cetak Slip Gaji"} {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length > 0 && (
-              <span className="bg-red-500 text-white rounded-full px-2 py-0.5 text-[9px] font-bold">
-                {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length}
-              </span>
-            )}
-          </button>
-        )}
+        <button 
+          onClick={() => setActiveTab("rekap")}
+          className={`px-5 py-4 border-b-2 font-semibold text-xs md:text-sm flex items-center gap-2 cursor-pointer transition duration-150 ${activeTab === "rekap" ? "border-[#1A7F5A] text-[#1A7F5A]" : "border-transparent text-[#6B7068] hover:text-[#1A1C18]"}`}
+        >
+          <Coins className="w-4 h-4" />
+          {session.role === "owner" ? "Rekap Kerja & Slip Gaji" : "Rekap Kerja & Cetak Slip Gaji"} {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length > 0 && (
+            <span className="bg-red-500 text-white rounded-full px-2 py-0.5 text-[9px] font-bold">
+              {filteredReports.filter(u => u.Status_Pembayaran !== "Lunas").length}
+            </span>
+          )}
+        </button>
         
         {session.role === "owner" && (
           <button 
@@ -1535,7 +1574,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto w-full px-4 mt-6 flex-1">
         
         {/* TAB 1: INPUT LAPORAN */}
-        {activeTab === "form" && (
+        {activeTab === "form" && session.role !== "owner" && (
           session.role === "sopir" ? (
             <div className="max-w-xl mx-auto space-y-6 pb-12 animate-fade-in">
               <div className="bg-[#FFFFFF] border border-[#E3E5E2] rounded-2xl shadow-sm p-6 space-y-6">
@@ -1707,6 +1746,48 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                {/* INFO CALCULATED WAGE */}
+                {(() => {
+                  const wageInfo = getDriverWageStatus();
+                  return (
+                    <div className="border border-[#E3E5E2] p-4 rounded-xl bg-[#FBFBFA] space-y-2">
+                      <span className="block text-xs font-semibold text-[#1A1C18]">Estimasi Upah Pengangkutan</span>
+                      {wageInfo.status === "incomplete" ? (
+                        <p className="text-[11px] text-gray-500 italic pb-0.5">
+                          Lengkapi pilihan lokasi, jenis truk, muatan, & asal muatan untuk melihat estimasi upah.
+                        </p>
+                      ) : wageInfo.status === "not_found" ? (
+                        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs font-semibold">
+                          ⚠ kombinasinya belum tersedia
+                        </div>
+                      ) : (
+                        <div className="p-3 bg-[#E6F4EE] border border-[#1A7F5A]/20 rounded-lg space-y-1">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-gray-600">Skema Hitungan:</span>
+                            <span className="font-bold text-[#1A7F5A]">
+                              {wageInfo.isKg ? `Rp ${wageInfo.rate.toLocaleString("id-ID")} / KG` : `Rp ${wageInfo.rate.toLocaleString("id-ID")} (Flat / Rit)`}
+                            </span>
+                          </div>
+                          {wageInfo.isKg && (
+                            <div className="flex justify-between items-center text-xs border-t border-[#1A7F5A]/10 pt-1 mt-1">
+                              <span className="text-gray-600">Berat Angkutan:</span>
+                              <span className="font-mono text-gray-800 font-bold">
+                                {parseFloat(sBeratKG) ? `${parseFloat(sBeratKG).toLocaleString("id-ID")} KG` : "0 KG"}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center text-xs font-bold border-t border-[#1A7F5A]/20 pt-1.5 mt-1">
+                            <span className="text-gray-800">Total Upah:</span>
+                            <span className="text-sm font-black text-[#1A7F5A]">
+                              Rp {wageInfo.total.toLocaleString("id-ID")}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* STATUS BAR OR SAVE ACTIONS */}
                 {isSavingReport && (
@@ -2374,7 +2455,7 @@ export default function App() {
                 {adminSubTab === "users" && (
                   <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1A7F5A] rounded-full" />
                 )}
-                Atur Akun Mandor
+                Atur Akun User
               </button>
               <button 
                 onClick={() => setAdminSubTab("dropdowns")}
@@ -2410,8 +2491,8 @@ export default function App() {
               <div className="space-y-4 animate-fade-in">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-serif font-bold text-lg text-gray-950">Daftar Akun Mandor</h3>
-                    <p className="text-[11px] text-gray-500 mt-0.5">Daftar akun mandor aktif yang melapor ke sistem.</p>
+                    <h3 className="font-serif font-bold text-lg text-gray-950">Daftar Akun Pengguna</h3>
+                    <p className="text-[11px] text-gray-500 mt-0.5">Daftar akun pengguna aktif (owner, mandor, sopir) yang terdaftar di dalam sistem.</p>
                   </div>
                   
                   <button 
@@ -2419,22 +2500,31 @@ export default function App() {
                     className="bg-[#1A7F5A] hover:bg-[#0F5C40] text-white font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1 cursor-pointer transition shadow-sm"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Tambah Mandor
+                    Tambah User
                   </button>
                 </div>
 
                 {isLoadingUsers ? (
                   <div className="text-center py-10 bg-white rounded-2xl border border-[#E3E5E2]">
                     <RefreshCw className="w-7 h-7 animate-spin text-[#1A7F5A] mx-auto mb-2" />
-                    <p className="text-xs text-gray-500">Membaca daftar mandor...</p>
+                    <p className="text-xs text-gray-500">Membaca daftar pengguna...</p>
                   </div>
                 ) : (
                   <div className="bg-white border border-[#E3E5E2] rounded-2xl shadow-sm divide-y divide-[#E3E5E2] overflow-hidden">
                     {users.map((item) => (
                       <div key={item.username} className="p-4 flex items-center justify-between">
                         <div>
-                          <h4 className="font-bold text-sm text-gray-800">{item.nama}</h4>
-                          <p className="text-xs text-[#6B7068] mt-0.5">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-sm text-gray-800">{item.nama}</h4>
+                            <span className={`px-2 py-0.5 text-[9px] rounded-full font-bold uppercase ${
+                              item.role === "owner" ? "bg-amber-100 text-amber-800 border border-amber-200" :
+                              item.role === "sopir" ? "bg-blue-100 text-blue-800 border border-blue-200" :
+                              "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                            }`}>
+                              {item.role || "mandor"}
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#6B7068] mt-1">
                             Username: <span className="font-semibold text-gray-700">@{item.username}</span> · Grup: <span className="font-semibold text-gray-700">{item.grup || item.nama}</span>
                           </p>
                         </div>
@@ -2485,7 +2575,8 @@ export default function App() {
                     { key: "pupukJenis", label: "Jenis Pupuk" },
                     { key: "pupukMerek", label: "Merek (Pupuk & Truk)" },
                     { key: "trukJenis", label: "Jenis Truk" },
-                    { key: "trukMuatan", label: "Muatan Truk" }
+                    { key: "supirMuatan", label: "Bahan Baku" },
+                    { key: "supirAsal", label: "Suppliyer" }
                   ].map((cat) => (
                     <button
                       key={cat.key}
@@ -2834,10 +2925,24 @@ export default function App() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[999] animate-fade-in">
           <div className="bg-white rounded-2xl border border-[#E3E5E2] max-w-sm w-full p-6 shadow-xl space-y-4">
             <h3 className="font-serif font-black text-base text-[#1A7F5A]">
-              {mMode === "add" ? "Tambah Mandor Baru" : "Edit Kata Sandi Mandor"}
+              {mMode === "add" ? "Tambah User Baru" : "Edit Kata Sandi User"}
             </h3>
 
             <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Role/Peran Akun</label>
+                <select
+                  value={mRole}
+                  onChange={(e) => setMRole(e.target.value as any)}
+                  disabled={mMode === "edit"}
+                  className="w-full text-xs bg-[#F5F6F4] border border-[#E3E5E2] rounded-lg px-3 py-2 text-gray-800 focus:bg-white outline-none disabled:opacity-50"
+                >
+                  <option value="owner">Primary Owner</option>
+                  <option value="mandor">Mandor</option>
+                  <option value="sopir">Sopir</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Username (Untuk Login)</label>
                 <input 
@@ -2851,15 +2956,24 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Nama Mandor / Kelompok</label>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Nama Pengguna (User)</label>
                 <input 
                   type="text"
                   value={mNama}
                   onChange={(e) => setMNama(e.target.value)}
-                  placeholder="Contoh: Grup Mandor Agus"
+                  placeholder="Contoh: Agus"
                   className="w-full text-xs bg-[#F5F6F4] border border-[#E3E5E2] rounded-lg px-3 py-2 text-gray-800 focus:bg-white outline-none"
                 />
               </div>
+
+              {mNama.trim() && (
+                <div className="bg-[#F5F6F4] p-2.5 rounded-lg border border-dashed border-[#E3E5E2]">
+                  <span className="block text-[10px] text-gray-400 font-bold uppercase tracking-wider">Preview Group Sistem</span>
+                  <span className="text-[11px] font-mono text-[#1A7F5A] font-bold">
+                    {mRole} {mNama.trim()}
+                  </span>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Kata Sandi Akun</label>
@@ -2867,7 +2981,7 @@ export default function App() {
                   type="text"
                   value={mPassword}
                   onChange={(e) => setMPassword(e.target.value)}
-                  placeholder="Ganti sandi login..."
+                  placeholder="Tentukan sandi login..."
                   className="w-full text-xs bg-[#F5F6F4] border border-[#E3E5E2] rounded-lg px-3 py-2 text-gray-800 focus:bg-white outline-none"
                 />
               </div>

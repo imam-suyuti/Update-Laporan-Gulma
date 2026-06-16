@@ -847,7 +847,7 @@ app.post("/api/user-save", async (req, res) => {
       Username: user.username,
       Nama: user.nama,
       Password: user.password,
-      Role: "mandor",
+      Role: user.role || "mandor",
       Grup: user.grup,
     };
 
